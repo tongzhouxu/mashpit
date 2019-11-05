@@ -26,3 +26,8 @@ Create a database of mash sketches
       ON BIOSAMPLE.biosample_acc=SKETCH.biosample_acc
     '
 
+## TODO
+
+* method for adding local assembly
+* Wrapper script for comparing two genomes
+
