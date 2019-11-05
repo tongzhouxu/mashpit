@@ -4,7 +4,7 @@ here=$BATS_TEST_DIRNAME
 db=$here/test.sqlite
 
 @test "Create database" {
-  run sqlite3 $db < $here/../scripts/mashpit.sql
+  run sqlite3 $db < $here/../scripts/mashpit_init.sql
 
   # Some filesize
   filesize=$(wc -c < $db)
