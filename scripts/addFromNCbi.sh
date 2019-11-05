@@ -142,7 +142,7 @@ SRR=$(echo "$srrXML" | xtract -pattern EXPERIMENT_PACKAGE -group RUN_SET -elemen
 rp=$(srapath -f names -r $SRR.realign | awk '-F|' 'NF>8 && $(NF-1)==200 { print $8;}'  ) ; 
 dump-ref-fasta "$rp" > $TMPDIR/$BIOSAMPLE_ACC.fasta 
 
-SKETCH_PATH="$DB.sketches/$BIOSAMPLE_ACC.msh"
+SKETCH_PATH="$DB.sketches/$BIOSAMPLE_ACC.$SRR.msh"
 SKETCH_ID=""
 if [ -s "$SKETCH_PATH" ]; then
   SKETCH_ID=$(sqlite3 $DB "
@@ -162,6 +162,6 @@ else
   )
 fi
 
-echo "SKETCH_ID => $SKETCH_ID"
+#echo "SKETCH_ID => $SKETCH_ID"
 
 
