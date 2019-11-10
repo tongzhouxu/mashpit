@@ -10,8 +10,10 @@ Create a database of mash sketches
 
 ### Add to the database
 
+    # Add one
     scripts/addFromNcbi.sh mashpit.sqlite SAMN02182865
-    tail -n +2 t/data/biosamples.txt | xargs -P 1 -n 1 bash -c '
+    # Add the next ten
+    tail -n +2 t/data/biosamples.txt | tail | xargs -P 1 -n 1 bash -c '
       scripts/addFromNcbi.sh mashpit.sqlite $0
     '
 
@@ -30,9 +32,10 @@ Create a database of mash sketches
 
 ### Dependencies
 
-* sra toolkit
-* edirect
+* sra toolkit >= v12.5
+* edirect >= v2.9
 * Mash >= v2.0
+* sqlite v3
 
 ## TODO
 
