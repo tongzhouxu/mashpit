@@ -38,6 +38,11 @@ BIOSAMPLE_ACC=$2
 # Ensure that the sketches directory exists
 mkdir -pv $DB.sketches
 
+LOCKFILE=$DB.sketches/.lock
+# Remove the lockfile if any crash.
+trap ' { rm -rf $LOCKFILE; } ' SIGHUP SIGINT SIGTERM
+lockfile $LOCKFILE
+
 # Create a temporary directory
 TMPDIR=$(mktemp -d MASHPIT.XXXXXX)
 trap ' { rm -rf $TMPDIR; } ' EXIT
@@ -75,7 +80,7 @@ if [ $SUBSPECIESTAXID -gt 0 ]; then
 elif [ $SPECIESTAXID -gt 0 ]; then
   TAXID=$SPECIESTAXID
 elif [ $GENUSTAXID -gt 0 ]; then
-  $TAXID=$GENUSTAXID
+  TAXID=$GENUSTAXID
 fi
 
 # Add to taxonomy database if the taxon doesn't
@@ -164,4 +169,5 @@ fi
 
 #echo "SKETCH_ID => $SKETCH_ID"
 
+rm -f $LOCKFILE
 
