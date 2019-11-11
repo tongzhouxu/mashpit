@@ -3,7 +3,7 @@
 set -e
 set -u
 
-VERSION=1
+VERSION=2
 
 function usage(){
   echo "Usage: $(basename $0) mashpit.sqlite3 biosample_acc"
@@ -147,7 +147,7 @@ SRR=$(echo "$srrXML" | xtract -pattern EXPERIMENT_PACKAGE -group RUN_SET -elemen
 rp=$(srapath -f names -r $SRR.realign | awk '-F|' 'NF>8 && $(NF-1)==200 { print $8;}'  ) ; 
 dump-ref-fasta "$rp" > $TMPDIR/$BIOSAMPLE_ACC.fasta 
 
-SKETCH_PATH="$DB.sketches/$BIOSAMPLE_ACC.$SRR.msh"
+SKETCH_PATH="$DB.sketches/$BIOSAMPLE_ACC.$SRR.fasta.msh"
 SKETCH_ID=""
 if [ -s "$SKETCH_PATH" ]; then
   SKETCH_ID=$(sqlite3 $DB "
@@ -157,10 +157,11 @@ if [ -s "$SKETCH_PATH" ]; then
   );
 else
   mash sketch -o $SKETCH_PATH $TMPDIR/$BIOSAMPLE_ACC.fasta
+  SKETCH_BASENAME=$(basename $SKETCH_PATH .msh)
   # INSERT INTO DB
   SKETCH_ID=$(sqlite3 $DB "
     INSERT INTO SKETCH (biosample_acc, path, source, software, seed)
-    VALUES ('$BIOSAMPLE_ACC', '$SKETCH_PATH', 'NCBI download', 'Mash', '42')
+    VALUES ('$BIOSAMPLE_ACC', '$SKETCH_BASENAME', 'NCBI download', 'Mash', '42')
     ;
     SELECT last_insert_rowid();
     "

@@ -50,17 +50,23 @@ TMPDIR=$(mktemp -d MASHPIT.XXXXXX)
 trap ' { rm -rf $TMPDIR; } ' EXIT
 
 # Get ref mash sketch location
-REFFILE=$(sqlite3 $DB "
+BASENAME=$(sqlite3 $DB "
   SELECT SKETCH.path 
   FROM SKETCH
   WHERE biosample_acc='$BIOSAMPLE_ACC'
   LIMIT 1
   ";
 )
+REFFILE="$DB.sketches/$BASENAME.msh"
+ls $REFFILE
+
 
 # Get a list of files that the database captures
 FOFN="$TMPDIR/fofn.txt"
-sqlite3 $DB "SELECT path FROM SKETCH" > $FOFN
+sqlite3 $DB "SELECT path FROM SKETCH" |\
+  while read BASENAME; do
+    echo "$DB.sketches/$BASENAME.msh"
+  done > $FOFN
 
 DISTFILE="$TMPDIR/dist.tsv"
 mash dist -t $REFFILE -l $FOFN | grep -v '^#' | sort -k2,2n > $DISTFILE
@@ -76,8 +82,6 @@ cat $DISTFILE | while read -r path dist; do
     WHERE path='$path'
     LIMIT 1"
   )
-  echo "TODO make the fasta path from 'mash dist' match the sketch path found in the db"
-  exit 1
   echo $path $MATCH
   BIOSAMPLE_MATCHES="$BIOSAMPLE_MATCHES $MATCH"
 done
