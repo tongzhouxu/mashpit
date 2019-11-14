@@ -142,10 +142,15 @@ fi
 srrXML=$(echo "$biosampleXML" | elink -target SRA | efetch -format xml);
 SRR=$(echo "$srrXML" | xtract -pattern EXPERIMENT_PACKAGE -group RUN_SET -element RUN@accession | tail -n 1)
 
+sqlite3 $DB "
+  INSERT INTO SRA (srr, biosample_acc)
+  VALUES ('$SRR', '$BIOSAMPLE_ACC');
+"
+
 # grab the assembly if it exists
 # https://github.com/ncbi/SKESA/issues/12#issuecomment-431503915
 rp=$(srapath -f names -r $SRR.realign | awk '-F|' 'NF>8 && $(NF-1)==200 { print $8;}'  ) ; 
-dump-ref-fasta "$rp" > $TMPDIR/$BIOSAMPLE_ACC.fasta 
+dump-ref-fasta "$rp" > $TMPDIR/$BIOSAMPLE_ACC.$SRR.fasta 
 
 SKETCH_PATH="$DB.sketches/$BIOSAMPLE_ACC.$SRR.fasta.msh"
 SKETCH_ID=""
@@ -156,12 +161,18 @@ if [ -s "$SKETCH_PATH" ]; then
     WHERE path='$SKETCH_PATH';"
   );
 else
-  mash sketch -o $SKETCH_PATH $TMPDIR/$BIOSAMPLE_ACC.fasta
+  # Make a subshell to temporarily change directory
+  (
+    cd $TMPDIR
+    mash sketch $BIOSAMPLE_ACC.$SRR.fasta > sketch.log 2>&1 || \
+      cat sketch.log
+  )
+  mv $TMPDIR/$BIOSAMPLE_ACC.$SRR.fasta.msh $SKETCH_PATH
   SKETCH_BASENAME=$(basename $SKETCH_PATH .msh)
   # INSERT INTO DB
   SKETCH_ID=$(sqlite3 $DB "
-    INSERT INTO SKETCH (biosample_acc, path, source, software, seed)
-    VALUES ('$BIOSAMPLE_ACC', '$SKETCH_BASENAME', 'NCBI download', 'Mash', '42')
+    INSERT INTO SKETCH (biosample_acc, srr, path, source, software, seed)
+    VALUES ('$BIOSAMPLE_ACC', '$SRR', '$SKETCH_BASENAME', 'NCBI download', 'Mash', '42')
     ;
     SELECT last_insert_rowid();
     "
