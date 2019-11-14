@@ -5,7 +5,7 @@ addons:
     sources:
       - sourceline: 'ppa:duggan/bats'
     packages:
-      -bats
-      -bc
+      - bats
+      - bc
 script: bats t/*.sh
 
