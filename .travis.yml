@@ -10,7 +10,6 @@ addons:
       - lockfile-progs
       - procmail
       - sra-toolkit
-      - mash
       - sqlite3
 before_install:
   - cd ~
@@ -21,5 +20,9 @@ before_install:
   - builtin exit
   - export PATH=$PATH:$HOME/edirect >& /dev/null || setenv PATH "${PATH}:$HOME/edirect"
   - ./edirect/setup.sh
+  - wget https://github.com/marbl/Mash/releases/download/v2.2/mash-Linux64-v2.2.tar
+  - tar xvf mash-Linux64-v2.2.tar
+  - export PATH=$PATH:$(pwd)/mash-Linux64-v2.2
+  - chmod -v +x $(pwd)/mash-Linux64-v2.2/mash
 script: bats --tap t/*.sh
 
