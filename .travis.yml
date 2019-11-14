@@ -8,5 +8,6 @@ addons:
       - bats
       - bc
       - lockfile-progs
+      - procmail
 script: bats --tap t/*.sh
 
