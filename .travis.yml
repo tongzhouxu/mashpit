@@ -10,7 +10,7 @@ addons:
       - lockfile-progs
       - procmail
       - sra-toolkit
-      - mash/bionic
+      - mash/bionic,now
       - sqlite3
 before_install:
   - cd ~
