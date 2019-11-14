@@ -7,5 +7,5 @@ addons:
     packages:
       - bats
       - bc
-script: bats t/*.sh
+script: bats --tap t/*.sh
 
