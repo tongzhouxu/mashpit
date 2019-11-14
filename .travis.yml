@@ -7,5 +7,6 @@ addons:
     packages:
       - bats
       - bc
+      - lockfile-progs
 script: bats --tap t/*.sh
 
