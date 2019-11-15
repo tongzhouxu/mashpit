@@ -1,4 +1,4 @@
 #!/bin/bash
 
-docker run --rm ncbi/edirect esummary $@
+docker run --rm -i ncbi/edirect esummary $@
 
