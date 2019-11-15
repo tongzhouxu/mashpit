@@ -13,7 +13,7 @@ addons:
       - sqlite3
 before_install:
   - export PATH=$PATH:$HOME/edirect >& /dev/null || setenv PATH "${PATH}:$HOME/edirect"
-  - ./edirect/setup.sh
+  - yes | ./edirect/setup.sh
   - wget https://github.com/marbl/Mash/releases/download/v2.2/mash-Linux64-v2.2.tar
   - tar xvf mash-Linux64-v2.2.tar
   - export PATH=$PATH:$(pwd)/mash-Linux64-v2.2
