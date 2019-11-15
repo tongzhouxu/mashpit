@@ -1,0 +1,47 @@
+#!/bin/sh
+
+if [ "$#" -eq 0 ]
+then
+  echo "Must supply path for indexed files"
+  exit 1
+fi
+
+target="$1"
+shift
+
+target=${target%/}
+
+if [ "$#" -eq 0 ]
+then
+  echo "Must supply path for data files"
+  exit 1
+fi
+
+data="$1"
+shift
+
+data=${data%/}
+
+find "$target" -name "*.e2x" -delete
+find "$target" -name "*.e2x.gz" -delete
+
+for fl in *.xml.gz
+do
+  base=${fl%.xml.gz}
+  echo "$base.e2x"
+  seconds_start=$(date "+%s")
+  if [ -s "$data/meshtree.txt" ]
+  then
+    gunzip -c "$fl" |
+    xtract -transform "$data/meshtree.txt" -e2index |
+    gzip -1 > "$target/$base.e2x.gz"
+  else
+    gunzip -c "$fl" |
+    xtract -e2index |
+    gzip -1 > "$target/$base.e2x.gz"
+  fi
+  seconds_end=$(date "+%s")
+  seconds=$((seconds_end - seconds_start))
+  echo "$seconds seconds"
+  sleep 1
+done

@@ -12,11 +12,6 @@ addons:
       - sra-toolkit
       - sqlite3
 before_install:
-  - cd ~
-  - wget ftp://ftp.ncbi.nlm.nih.gov/entrez/entrezdirect/edirect.tar.gz
-  #- perl -MNet::FTP -e '$ftp = new Net::FTP("ftp.ncbi.nlm.nih.gov", Passive => 1); $ftp->login; $ftp->binary; $ftp->get("/entrez/entrezdirect/edirect.tar.gz");' 
-  - gunzip -c edirect.tar.gz | tar xvf -
-  - rm -f edirect.tar.gz
   - export PATH=$PATH:$HOME/edirect >& /dev/null || setenv PATH "${PATH}:$HOME/edirect"
   - ./edirect/setup.sh
   - wget https://github.com/marbl/Mash/releases/download/v2.2/mash-Linux64-v2.2.tar

@@ -1,0 +1,267 @@
+#!/bin/sh
+
+# ===========================================================================
+#
+#                            PUBLIC DOMAIN NOTICE
+#            National Center for Biotechnology Information (NCBI)
+#
+#  This software/database is a "United States Government Work" under the
+#  terms of the United States Copyright Act.  It was written as part of
+#  the author's official duties as a United States Government employee and
+#  thus cannot be copyrighted.  This software/database is freely available
+#  to the public for use. The National Library of Medicine and the U.S.
+#  Government do not place any restriction on its use or reproduction.
+#  We would, however, appreciate having the NCBI and the author cited in
+#  any work or product based on this material.
+#
+#  Although all reasonable efforts have been taken to ensure the accuracy
+#  and reliability of the software and data, the NLM and the U.S.
+#  Government do not and cannot warrant the performance or results that
+#  may be obtained by using this software or data. The NLM and the U.S.
+#  Government disclaim all warranties, express or implied, including
+#  warranties of performance, merchantability or fitness for any particular
+#  purpose.
+#
+# ===========================================================================
+#
+# File Name:  bt-link
+#
+# Author:  Jonathan Kans
+#
+# Version Creation Date:   2/6/19
+#
+# ==========================================================================
+
+#  Front-end for expanding Entrez Direct style of command-line navigation to
+#  external resources maintained by BioThings.io.  See comments in xplore
+#  script for credits and references.
+
+dir=`dirname "$0"`
+case "`uname -s`" in
+ CYGWIN_NT*)
+   # Use a negative match here because the shell treats 0 as success.
+   if perl -e 'exit $^O !~ /^MSWin/'; then
+      dir=`cygpath -w "$dir"`
+   fi
+   ;;
+esac
+
+debug=false
+
+if [ "$#" -gt 1 ]
+then
+  if [ "$1" = "-debug" ]
+  then
+    debug=true
+    shift
+  fi
+fi
+
+if [ "$#" -lt 1 ]
+then
+  echo "Must supply target argument"
+  exit 1
+fi
+
+dst="$1"
+shift
+
+if [ -z "$dst" ]
+then
+  echo "Must supply target argument"
+  exit 1
+fi
+
+msg=$(cat /dev/stdin)
+src=$(echo "$msg" | xtract -pattern ENTREZ_EXTEND -element Type)
+
+if [ -z "$src" ]
+then
+  echo "Must pipe in source message"
+  exit 1
+fi
+
+GetPaths() {
+  # input: variant ncbigene
+  api="$1"
+  fld="$2"
+  cat "$dir"/bt-context.txt |
+  while read svc typ pth
+  do
+    if [ "$api" != "$svc" ]
+    then
+      continue
+    fi
+    if [ "$fld" != "$typ" ]
+    then
+      continue
+    fi
+    echo "$pth"
+  done |
+  uniq -i | tr '\n' ',' | sed 's/,*$//g'
+  # output: clinvar.gene.id,dbsnp.gene.geneid,emv.gene.id
+}
+
+GetFields() {
+  # input: clinvar.gene.id,dbsnp.gene.geneid,emv.gene.id
+  pth="$1"
+  echo "$pth" |
+  tr ',' '\n' |
+  while read itm
+  do
+    echo "${itm%.*}"
+  done |
+  sort -f | uniq -i | tr '\n' ',' | sed 's/,*$//g'
+  # output: clinvar.gene,dbsnp.gene,emv.gene
+}
+
+DoQuery() {
+  url="$1"
+  api="$2"
+  pth=$(GetPaths "$api" "$src")
+  fds=$(GetFields "$pth")
+  echo "$msg" |
+  xtract -pattern ENTREZ_EXTEND -sep "\n" -element Id |
+  sort -V | uniq -i | join-into-groups-of 250 |
+  while read ids
+  do
+    if [ "$debug" = true ]
+    then
+      echo "nquire -url $url query -q '$ids' -fields $fds -always_list $fds -scopes $pth -size 1000 | xtract -j2x |" > /dev/tty
+      echo "xtract -pattern anon -element _id" > /dev/tty
+    fi
+    seconds_start=$(date "+%s")
+    nquire -url "$url" query -q "$ids" -fields "$fds" -always_list "$fds" -scopes "$pth" -size 1000 | xtract -j2x |
+    xtract -pattern anon -tab "\n" -element _id
+    seconds_end=$(date "+%s")
+    seconds=$((seconds_end - seconds_start))
+    if [ "$debug" = true ]
+    then
+      echo "$seconds seconds" > /dev/tty
+    fi
+  done
+  # API chem, SRC uniprot, FDS drugbank.targets, PTH drugbank.targets.uniprot, UIDS P06756,P34998,P49137
+}
+
+DoFetch() {
+  url="$1"
+  api="$2"
+  pth=$(GetPaths "$api" "$dst")
+  fds=$(GetFields "$pth")
+  echo "$msg" |
+  xtract -pattern ENTREZ_EXTEND -sep "\n" -element Id |
+  sort -V | uniq -i | join-into-groups-of 250 |
+  while read ids
+  do
+    if [ "$debug" = true ]
+    then
+      echo "nquire -url $url $api -ids '$ids' -fields $fds -always_list $fds | xtract -j2x |" > /dev/tty
+      echo "xtract -biopath anon $pth" > /dev/tty
+    fi
+    seconds_start=$(date "+%s")
+    nquire -url "$url" "$api" -ids "$ids" -fields "$fds" -always_list "$fds" | xtract -j2x |
+    xtract -biopath anon "$pth"
+    seconds_end=$(date "+%s")
+    seconds=$((seconds_end - seconds_start))
+    if [ "$debug" = true ]
+    then
+      echo "$seconds seconds" > /dev/tty
+    fi
+  done
+}
+
+DoWrap() {
+  echo "<opt>"
+  sort -V | uniq -i |
+  while read uid
+  do
+    echo "<Id>$uid</Id>"
+  done
+  echo "</opt>"
+}
+
+DoLoad() {
+  xtract -wrp ENTREZ_EXTEND -pattern opt -wrp Type -lbl "$dst" \
+    -wrp Count -num Id -wrp Id -encode Id |
+  xtract -format
+}
+
+case "$src-$dst" in
+  uniprot-ncbigene | \
+  ensembl.gene-ncbigene | \
+  hgnc.symbol-ncbigene | \
+  wikipathways-ncbigene | \
+  pubmed-ncbigene )
+    DoQuery "http://mygene.info/v3" gene |
+    DoWrap |
+    DoLoad
+    break
+    ;;
+  ncbigene-uniprot | \
+  ncbigene-ensembl.gene | \
+  ncbigene-hgnc.symbol | \
+  ncbigene-wikipathways | \
+  ncbigene-pubmed )
+    DoFetch "http://mygene.info/v3" gene |
+    DoWrap |
+    DoLoad
+    break
+    ;;
+  ncbigene-hgvs | \
+  hgnc.symbol-hgvs | \
+  ensembl.gene-hgvs | \
+  dbsnp-hgvs | \
+  pubmed-hgvs | \
+  uniprot-hgvs )
+    DoQuery "http://myvariant.info/v1" variant |
+    DoWrap |
+    DoLoad
+    break
+    ;;
+  hgvs-ncbigene | \
+  hgvs-hgnc.symbol | \
+  hgvs-ensembl.gene | \
+  hgvs-dbsnp | \
+  hgvs-pubmed | \
+  hgvs-uniprot )
+    DoFetch "http://myvariant.info/v1" variant |
+    DoWrap |
+    DoLoad
+    break
+    ;;
+  dbsnp-inchikey | \
+  pubchem.compound-inchikey | \
+  drugbank-inchikey | \
+  pubmed-inchikey | \
+  hgnc.symbol-inchikey | \
+  uniprot-inchikey | \
+  clinicaltrials-inchikey )
+    DoQuery "http://mychem.info/v1" chem |
+    DoWrap |
+    DoLoad
+    break
+    ;;
+  inchikey-dbsnp | \
+  inchikey-pubchem.compound | \
+  inchikey-drugbank | \
+  inchikey-pubmed | \
+  inchikey-hgnc.symbol | \
+  inchikey-uniprot | \
+  inchikey-clinicaltrials | \
+  drugbank-dbsnp | \
+  drugbank-pubchem.compound | \
+  drugbank-pubmed | \
+  drugbank-hgnc.symbol | \
+  drugbank-uniprot | \
+  drugbank-clinicaltrials )
+    DoFetch "http://mychem.info/v1" chem |
+    DoWrap |
+    DoLoad
+    break
+    ;;
+  * )
+    exec >&2
+    echo "$0: Unrecognized index $src-$dst"
+    exit 1
+    ;;
+esac

@@ -1,0 +1,219 @@
+#!/bin/sh
+
+while [ $# -gt 0 ]
+do
+  case "$1" in
+    -path )
+      shift
+      ;;
+    -* )
+      exec >&2
+      echo "$0: Unrecognized option $1"
+      exit 1
+      ;;
+    * )
+      break
+      ;;
+  esac
+done
+
+if [ "$#" -gt 0 ]
+then
+  target="$1"
+  MASTER=$(cd "$target" && pwd)
+  CONFIG=${MASTER}
+  shift
+else
+  if [ -z "${EDIRECT_PUBMED_MASTER}" ]
+  then
+    echo "Must supply path to master archive area or set EDIRECT_PUBMED_MASTER environment variable"
+    exit 1
+  else
+    MASTER="${EDIRECT_PUBMED_MASTER}"
+    MASTER=${MASTER%/}
+  fi
+fi
+
+while [ $# -gt 0 ]
+do
+  case "$1" in
+    -temp | -work | -working )
+      shift
+      ;;
+    -* )
+      exec >&2
+      echo "$0: Unrecognized option $1"
+      exit 1
+      ;;
+    * )
+      break
+      ;;
+  esac
+done
+
+if [ "$#" -gt 0 ]
+then
+  working="$1"
+  WORKING=$(cd "$working" && pwd)
+  shift
+else
+  if [ -z "${EDIRECT_PUBMED_WORKING}" ]
+  then
+    WORKING=${MASTER}
+  else
+    WORKING="${EDIRECT_PUBMED_WORKING}"
+    WORKING=${WORKING%/}
+  fi
+fi
+
+echo "MASTER $MASTER"
+
+echo "WORKING $WORKING"
+
+for dir in Archive Postings
+do
+  mkdir -p "$MASTER/$dir"
+done
+
+for dir in Current Data Indexed Inverted Merged Pubmed
+do
+  mkdir -p "$WORKING/$dir"
+done
+
+if [ ! -f "$MASTER/Archive/CACHEDIR.TAG" ]
+then
+  pm-prepare "$MASTER/Archive"
+fi
+
+date
+
+seconds_start=$(date "+%s")
+echo "Downloading PubMed Files"
+cd "$WORKING/Pubmed"
+download-pubmed baseline updatefiles
+echo "Downloading MeSH Tree"
+cd "$WORKING/Data"
+download-ncbi-data meshtree
+seconds_end=$(date "+%s")
+seconds=$((seconds_end - seconds_start))
+echo "$seconds seconds"
+DWN=$seconds
+
+seconds_start=$(date "+%s")
+echo "Populating PubMed Archive"
+cd "$WORKING/Pubmed"
+pm-stash "$MASTER/Archive"
+seconds_end=$(date "+%s")
+seconds=$((seconds_end - seconds_start))
+echo "$seconds seconds"
+POP=$seconds
+
+seconds_start=$(date "+%s")
+echo "Refreshing Versioned Records"
+pm-refresh "$MASTER/Archive"
+seconds_end=$(date "+%s")
+seconds=$((seconds_end - seconds_start))
+echo "$seconds seconds"
+REF=$seconds
+
+seconds_start=$(date "+%s")
+echo "Removing Previous Indices"
+cd "$WORKING/Indexed"
+target="$WORKING/Indexed"
+find "$target" -name "*.e2x" -delete
+find "$target" -name "*.e2x.gz" -delete
+cd "$WORKING/Inverted"
+target="$WORKING/Inverted"
+find "$target" -name "*.inv" -delete
+find "$target" -name "*.inv.gz" -delete
+cd "$WORKING/Merged"
+target="$WORKING/Merged"
+find "$target" -name "*.mrg" -delete
+find "$target" -name "*.mrg.gz" -delete
+seconds_end=$(date "+%s")
+seconds=$((seconds_end - seconds_start))
+echo "$seconds seconds"
+CLR=$seconds
+
+seconds_start=$(date "+%s")
+echo "Collecting PubMed Records"
+cd "$WORKING/Pubmed"
+pm-collect "$MASTER/Archive" "$WORKING/Current"
+seconds_end=$(date "+%s")
+seconds=$((seconds_end - seconds_start))
+echo "$seconds seconds"
+COL=$seconds
+
+seconds_start=$(date "+%s")
+echo "Indexing PubMed Records"
+cd "$WORKING/Current"
+pm-index "$WORKING/Indexed" "$WORKING/Data"
+seconds_end=$(date "+%s")
+seconds=$((seconds_end - seconds_start))
+echo "$seconds seconds"
+IDX=$seconds
+
+seconds_start=$(date "+%s")
+echo "Inverting PubMed Indices"
+cd "$WORKING/Indexed"
+pm-invert "$WORKING/Inverted"
+seconds_end=$(date "+%s")
+seconds=$((seconds_end - seconds_start))
+echo "$seconds seconds"
+INV=$seconds
+
+seconds_start=$(date "+%s")
+echo "Merging Inverted Indices"
+cd "$WORKING/Inverted"
+pm-merge "$WORKING/Merged"
+seconds_end=$(date "+%s")
+seconds=$((seconds_end - seconds_start))
+echo "$seconds seconds"
+MRG=$seconds
+
+seconds_start=$(date "+%s")
+echo "Producing Postings Files"
+cd "$WORKING/Merged"
+pm-promote "$MASTER/Postings"
+seconds_end=$(date "+%s")
+seconds=$((seconds_end - seconds_start))
+echo "$seconds seconds"
+PST=$seconds
+
+echo "DWN $DWN seconds"
+echo "POP $POP seconds"
+echo "REF $REF seconds"
+echo "CLR $CLR seconds"
+echo "COL $COL seconds"
+echo "IDX $IDX seconds"
+echo "INV $INV seconds"
+echo "MRG $MRG seconds"
+echo "PST $PST seconds"
+
+echo ""
+
+phrase-search -path "$MASTER/Postings" -query "mapping of spatio-temporal pollution status AND 2008 [YEAR]" |
+fetch-pubmed -path "$MASTER/Archive" |
+xtract -pattern Author -if Affiliation -contains Medicine \
+  -pfx "Archive and Index are " -element Initials
+
+echo ""
+
+date
+
+if [ -n "$CONFIG" ]
+then
+  target=bash_profile
+  if ! grep "$target" "$HOME/.bashrc" >/dev/null 2>&1
+  then
+    if [ ! -f $HOME/.$target ] || grep 'bashrc' "$HOME/.$target" >/dev/null 2>&1
+    then
+      target=bashrc
+    fi
+  fi
+  echo ""
+  echo "For convenience, please execute the following to save the archive path to a variable:"
+  echo ""
+  echo "  echo \"export EDIRECT_PUBMED_MASTER='${CONFIG}'\" >>" "\$HOME/.$target"
+  echo ""
+fi

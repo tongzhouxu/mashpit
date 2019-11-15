@@ -1,0 +1,15 @@
+#!/bin/sh
+PERL="perl"
+dir=`dirname "$0"`
+case "`uname -s`" in
+ CYGWIN_NT*)
+   # Use a negative match here because the shell treats 0 as success.
+   if perl -e 'exit $^O !~ /^MSWin/'; then
+      dir=`cygpath -w "$dir"`
+   fi
+   ;;
+ Darwin )
+   PERL="/usr/bin/perl"
+   ;;
+esac
+exec "${PERL}" "$dir"/edirect.pl -spell "$@"

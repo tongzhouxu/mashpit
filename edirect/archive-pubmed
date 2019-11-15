@@ -1,0 +1,145 @@
+#!/bin/sh
+
+while [ $# -gt 0 ]
+do
+  case "$1" in
+    -path )
+      shift
+      ;;
+    -* )
+      exec >&2
+      echo "$0: Unrecognized option $1"
+      exit 1
+      ;;
+    * )
+      break
+      ;;
+  esac
+done
+
+if [ "$#" -gt 0 ]
+then
+  target="$1"
+  MASTER=$(cd "$target" && pwd)
+  CONFIG=${MASTER}
+  shift
+else
+  if [ -z "${EDIRECT_PUBMED_MASTER}" ]
+  then
+    echo "Must supply path to master archive area or set EDIRECT_PUBMED_MASTER environment variable"
+    exit 1
+  else
+    MASTER="${EDIRECT_PUBMED_MASTER}"
+    MASTER=${MASTER%/}
+  fi
+fi
+
+while [ $# -gt 0 ]
+do
+  case "$1" in
+    -temp | -work | -working )
+      shift
+      ;;
+    -* )
+      exec >&2
+      echo "$0: Unrecognized option $1"
+      exit 1
+      ;;
+    * )
+      break
+      ;;
+  esac
+done
+
+if [ "$#" -gt 0 ]
+then
+  working="$1"
+  WORKING=$(cd "$working" && pwd)
+  shift
+else
+  if [ -z "${EDIRECT_PUBMED_WORKING}" ]
+  then
+    WORKING=${MASTER}
+  else
+    WORKING="${EDIRECT_PUBMED_WORKING}"
+    WORKING=${WORKING%/}
+  fi
+fi
+
+echo "MASTER $MASTER"
+
+echo "WORKING $WORKING"
+
+for dir in Archive Postings
+do
+  mkdir -p "$MASTER/$dir"
+done
+
+for dir in Current Data Indexed Inverted Merged Pubmed
+do
+  mkdir -p "$WORKING/$dir"
+done
+
+if [ ! -f "$MASTER/Archive/CACHEDIR.TAG" ]
+then
+  pm-prepare "$MASTER/Archive"
+fi
+
+date
+
+seconds_start=$(date "+%s")
+echo "Downloading PubMed Files"
+cd "$WORKING/Pubmed"
+download-pubmed baseline updatefiles
+seconds_end=$(date "+%s")
+seconds=$((seconds_end - seconds_start))
+echo "$seconds seconds"
+DWN=$seconds
+
+seconds_start=$(date "+%s")
+echo "Populating PubMed Archive"
+pm-stash "$MASTER/Archive"
+seconds_end=$(date "+%s")
+seconds=$((seconds_end - seconds_start))
+echo "$seconds seconds"
+POP=$seconds
+
+seconds_start=$(date "+%s")
+echo "Refreshing Versioned Records"
+pm-refresh "$MASTER/Archive"
+seconds_end=$(date "+%s")
+seconds=$((seconds_end - seconds_start))
+echo "$seconds seconds"
+REF=$seconds
+
+echo "DWN $DWN seconds"
+echo "POP $POP seconds"
+echo "REF $REF seconds"
+
+echo ""
+
+echo 18810966 |
+fetch-pubmed -path "$MASTER/Archive" |
+xtract -pattern Author -if Affiliation -contains Medicine \
+  -pfx "Archive is " -element Initials
+
+echo ""
+
+date
+
+if [ -n "$CONFIG" ]
+then
+  target=bash_profile
+  if ! grep "$target" "$HOME/.bashrc" >/dev/null 2>&1
+  then
+    if [ ! -f $HOME/.$target ] || grep 'bashrc' "$HOME/.$target" >/dev/null 2>&1
+    then
+      target=bashrc
+    fi
+  fi
+  echo ""
+  echo "For convenience, please execute the following to save the archive path to a variable:"
+  echo ""
+  echo "  echo \"export EDIRECT_PUBMED_MASTER='${CONFIG}'\" >>" "\$HOME/.$target"
+  echo ""
+fi

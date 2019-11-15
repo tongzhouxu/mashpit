@@ -1,0 +1,198 @@
+#!/bin/sh
+
+# ===========================================================================
+#
+#                            PUBLIC DOMAIN NOTICE
+#            National Center for Biotechnology Information (NCBI)
+#
+#  This software/database is a "United States Government Work" under the
+#  terms of the United States Copyright Act.  It was written as part of
+#  the author's official duties as a United States Government employee and
+#  thus cannot be copyrighted.  This software/database is freely available
+#  to the public for use. The National Library of Medicine and the U.S.
+#  Government do not place any restriction on its use or reproduction.
+#  We would, however, appreciate having the NCBI and the author cited in
+#  any work or product based on this material.
+#
+#  Although all reasonable efforts have been taken to ensure the accuracy
+#  and reliability of the software and data, the NLM and the U.S.
+#  Government do not and cannot warrant the performance or results that
+#  may be obtained by using this software or data. The NLM and the U.S.
+#  Government disclaim all warranties, express or implied, including
+#  warranties of performance, merchantability or fitness for any particular
+#  purpose.
+#
+# ===========================================================================
+#
+# File Name:  bt-srch
+#
+# Author:  Jonathan Kans
+#
+# Version Creation Date:   2/6/19
+#
+# ==========================================================================
+
+#  Front-end for expanding Entrez Direct style of command-line navigation to
+#  external resources maintained by BioThings.io.  See comments in xplore
+#  script for credits and references.
+
+debug=false
+
+if [ "$#" -gt 1 ]
+then
+  if [ "$1" = "-debug" ]
+  then
+    debug=true
+    shift
+  fi
+fi
+
+if [ "$#" -lt 1 ]
+then
+  echo "Must supply target argument"
+  exit 1
+fi
+
+dst="$1"
+shift
+
+que=""
+tax=""
+act=""
+
+while [ $# -gt 0 ]
+do
+  case "$1" in
+    -q | -query )
+      que=$2
+      shift
+      shift
+      ;;
+    -organism | -taxname )
+      tax=$2
+      shift
+      shift
+      ;;
+    -action | -actions )
+      act=$2
+      shift
+      shift
+      ;;
+    -* )
+      exec >&2
+      echo "$0: Unrecognized option $1"
+      exit 1
+      ;;
+    * )
+      break
+      ;;
+  esac
+done
+
+case "$tax" in
+  human )
+    tax="9606"
+    ;;
+  mouse )
+    tax="10090"
+    ;;
+  rat )
+    tax="10116"
+    ;;
+  fruitfly )
+    tax="7227"
+    ;;
+  * )
+    break
+    ;;
+esac
+
+case "$tax" in
+ *[^0-9]* ) # not a number (at least one non-digit somewhere)
+   tax=$(esearch -db taxonomy -query "$tax [SCIN]" | efetch -format uid)
+   ;;
+ * ) # a number (all digits)
+   break
+   ;;
+esac
+
+DoWrap() {
+  echo "<opt>"
+  sort -V | uniq -i |
+  while read uid
+  do
+    echo "<Id>$uid</Id>"
+  done
+  echo "</opt>"
+}
+
+DoLoad() {
+  xtract -wrp ENTREZ_EXTEND -pattern opt -wrp Type -lbl "$dst" \
+    -wrp Count -num Id -wrp Id -encode Id |
+  xtract -format
+}
+
+DoSearch() {
+  url="$1"
+  if [ -z "$que" ]
+  then
+    echo "Must supply -query argument"
+    exit 1
+  fi
+  if [ "$tax" != "" ]
+  then
+    que=$(echo "$que AND taxid:$tax")
+  fi
+  if [ "$act" != "" ]
+  then
+    que=$(echo "$que AND drugbank.targets.actions:$act")
+  fi
+  if [ "$debug" = true ]
+  then
+    echo "nquire -get $url query -q '$que' -fetch_all TRUE | xtract -j2x |" > /dev/tty
+    echo "xtract -pattern hits -element _id" > /dev/tty
+  fi
+  res=$(nquire -get "$url" query -q "$que" -fetch_all TRUE | xtract -j2x)
+  sid=$(echo "$res" | xtract -pattern opt -element _scroll_id)
+  ttl=$(echo "$res" | xtract -pattern opt -element total)
+  while :
+  do
+    ids=$(echo "$res" | xtract -pattern hits -element _id)
+    echo "$ids"
+    nid=$(echo "$ids" | wc -l)
+    ttl=$((ttl - nid))
+    if [ $ttl -lt 1 ]
+    then
+      break
+    fi
+    res=$(nquire -get "$url" query -scroll_id "$sid" | xtract -j2x)
+  done
+}
+
+case "$dst" in
+  ncbigene )
+    DoSearch "http://mygene.info/v3" |
+    DoWrap |
+    DoLoad
+    break
+    ;;
+  hgvs )
+    DoSearch "http://myvariant.info/v1" |
+    DoWrap |
+    xtract -wrp ENTREZ_EXTEND -pattern opt -wrp Type -lbl hgvs \
+      -wrp Count -num Id -wrp Id -encode Id |
+    xtract -format
+    break
+    ;;
+  inchikey )
+    DoSearch "http://mychem.info/v1" |
+    DoWrap |
+    DoLoad
+    break
+    ;;
+  * )
+    exec >&2
+    echo "$0: Unrecognized target $dst"
+    exit 1
+    ;;
+esac

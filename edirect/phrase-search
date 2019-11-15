@@ -1,0 +1,560 @@
+#!/bin/sh
+
+target=""
+mode="query"
+field=""
+debug=false
+
+while [ $# -gt 0 ]
+do
+  case "$1" in
+    -h | -help | --help )
+      mode=help
+      break
+      ;;
+    -debug )
+      debug=true
+      shift
+      ;;
+    -path | -master )
+      target=$2
+      shift
+      shift
+      ;;
+    -count )
+      mode="count"
+      shift
+      ;;
+    -counts )
+      mode="counts"
+      shift
+      ;;
+    -countr )
+      mode="countr"
+      shift
+      ;;
+    -countp )
+      mode="countp"
+      shift
+      ;;
+    -query | -phrase )
+      mode="query"
+      shift
+      ;;
+    -filter )
+      mode="filter"
+      shift
+      ;;
+    -search )
+      mode="search"
+      shift
+      ;;
+    -exact )
+      mode="exact"
+      shift
+      ;;
+    -mock )
+      mode="mock"
+      shift
+      ;;
+    -mocks )
+      mode="mocks"
+      shift
+      ;;
+    -mockx )
+      mode="mockx"
+      shift
+      ;;
+    -term | -terms )
+      mode="terms"
+      shift
+      if [ $# -gt 0 ]
+      then
+        field=$1
+       shift
+      fi
+      ;;
+    -* )
+      exec >&2
+      echo "$0: Unrecognized option $1"
+      exit 1
+      ;;
+    * )
+      break
+      ;;
+  esac
+done
+
+if [ $mode = "help" ]
+then
+  cat << "EOF"
+USAGE: $0
+       [-path path_to_pubmed_master]
+       -count | -counts | -query | -filter | -exact | -terms
+       query arguments
+
+EXAMPLES:
+
+  phrase-search -terms NORM
+
+  phrase-search -count "catabolite repress*"
+
+  phrase-search -counts "catabolite repress*"
+
+  phrase-search -query "(literacy AND numeracy) NOT (adolescent OR child)"
+
+  phrase-search -query "selective serotonin reuptake inhibit*"
+
+  phrase-search -query "monoamine oxidase inhibitor [STEM]"
+
+  phrase-search -query "vitamin c + + common cold"
+
+  phrase-search -query "vitamin c ~ ~ common cold"
+
+  phrase-search -query "C02.782.417* [TREE] AND 2015:2018 [YEAR]"
+
+  phrase-search -exact "Genetic Control of Biochemical Reactions in Neurospora."
+
+AUTOMATION:
+
+  ascend_mesh_tree() {
+    var="${1%\*}"
+    while :
+    do
+      phrase-search -count "$var* [TREE]"
+      case "$var" in
+        *.* ) var="${var%????}" ;;
+        *   ) break             ;;
+      esac
+    done
+  }
+
+  ascend_mesh_tree "C14.907.617.812"
+
+  declare -a THEMES
+  THEMES=( A+ A- B Bc Bg C D E E+ E- Ec Ec+ Ec- \\
+           Eg Eg+ G H I J Jc Jg K L Md Mp N O Pa \\
+           Pr Q Rg Sa T Te U Ud V+ W X Y Z )
+  declare -a REMAINS
+  REMAINS=("${THEMES[@]:1}")
+
+  for fst in ${THEMES[@]}
+  do
+    num=$(phrase-search -query "$fst [THME]" | wc -l)
+    echo -e "$fst\t \t$num"
+    for scd in ${REMAINS[@]}
+    do
+      num=$(phrase-search -query "$fst [THME] AND $scd [THME]" | wc -l)
+      echo -e "$fst\t$scd\t$num"
+      echo -e "$scd\t$fst\t$num"
+    done
+    REMAINS=("${REMAINS[@]:1}")
+  done | sort | expand -t 7,13
+
+ENTREZ INTEGRATION
+
+  esearch -db pubmed -query "complement system proteins [MESH]" -pub clinical |
+  efetch -format uid |
+  phrase-search -filter "L [THME] AND D03* [TREE]"
+
+MESH CATEGORIES
+
+  A – Anatomy
+  B – Organisms
+  C – Diseases
+  D – Chemicals and Drugs
+  E – Analytical, Diagnostic and Therapeutic Techniques and Equipment
+  F – Psychiatry and Psychology
+  G – Phenomena and Processes
+  H – Disciplines and Occupations
+  I – Anthropology, Education, Sociology and Social Phenomena
+  J – Technology and Food and Beverages
+  K – Humanities
+  L – Information Science
+  M – Named Groups
+  N – Health Care
+  V – Publication Characteristics
+  Z – Geographicals
+
+MESH CODES
+
+  A01 – body regions
+  A02 – musculoskeletal system
+  A03 – digestive system
+  A04 – respiratory system
+  A05 – urogenital system
+  A06 – endocrine system
+  A07 – cardiovascular system
+  A08 – nervous system
+  A09 – sense organs
+  A10 – tissues
+  A11 – cells
+  A12 – fluids and secretions
+  A13 – animal structures
+  A14 – stomatognathic system
+  A15 – hemic and immune systems
+  A16 – embryonic structures
+  A17 – integumentary system
+  A18 - plant structures
+  A19 - fungal structures
+  A20 - bacterial structures
+  A21 - viral structures
+
+  B01 – eukaryota
+  B02 – archaea
+  B03 – bacteria
+  B04 – viruses
+  B05 – organism forms
+
+  C01 – bacterial infections and mycoses
+  C02 – virus diseases
+  C03 – parasitic diseases
+  C04 – neoplasms
+  C05 – musculoskeletal diseases
+  C06 – digestive system diseases
+  C07 – stomatognathic diseases
+  C08 – respiratory tract diseases
+  C09 – otorhinolaryngologic diseases
+  C10 – nervous system diseases
+  C11 – eye diseases
+  C12 – male urogenital diseases
+  C13 – female urogenital diseases and pregnancy complications
+  C14 – cardiovascular diseases
+  C15 – hemic and lymphatic diseases
+  C16 – congenital, hereditary, and neonatal diseases and abnormalities
+  C17 – skin and connective tissue diseases
+  C18 – nutritional and metabolic diseases
+  C19 – endocrine system diseases
+  C20 – immune system diseases
+  C21 – disorders of environmental origin
+  C22 – animal diseases
+  C23 – pathological conditions, signs and symptoms
+  C24 - occupational diseases
+  C25 - chemically-induced disorders
+  C26 - wounds and injuries
+
+  D01 – inorganic chemicals
+  D02 – organic chemicals
+  D03 – heterocyclic compounds
+  D04 – polycyclic compounds
+  D05 – macromolecular substances
+  D06 – hormones, hormone substitutes, and hormone antagonists
+  D08 – enzymes and coenzymes
+  D09 – carbohydrates
+  D10 – lipids
+  D12 – amino acids, peptides, and proteins
+  D13 – nucleic acids, nucleotides, and nucleosides
+  D20 – complex mixtures
+  D23 – biological factors
+  D25 – biomedical and dental materials
+  D26 – pharmaceutical preparations
+  D27 – chemical actions and uses
+
+  E01 – diagnosis
+  E02 – therapeutics
+  E03 – anesthesia and analgesia
+  E04 – surgical procedures, operative
+  E05 – investigative techniques
+  E06 – dentistry
+  E07 – equipment and supplies
+
+  F01 – behavior and behavior mechanisms
+  F02 – psychological phenomena
+  F03 – mental disorders
+  F04 – behavioral disciplines and activities
+
+  G01 – physical phenomena
+  G02 – chemical phenomena
+  G03 – metabolism
+  G04 – cell physiological phenomena
+  G05 – genetic phenomena
+  G06 – microbiological phenomena
+  G07 – physiological phenomena
+  G08 – reproductive and urinary physiological phenomena
+  G09 – circulatory and respiratory physiological phenomena
+  G10 – digestive system and oral physiological phenomena
+  G11 – musculoskeletal and neural physiological phenomena
+  G12 – immune system phenomena
+  G13 – integumentary system physiological phenomena
+  G14 – ocular physiological phenomena
+  G15 - plant physiological phenomena
+  G16 - biological phenomena
+  G17 - mathematical concepts
+
+  H01 – natural science disciplines
+  H02 - health occupations
+
+  I01 – social sciences
+  I02 – education
+  I03 – human activities
+
+  J01 – technology, industry, and agriculture
+  J02 – food and beverages
+  J03 - non-medical public and private facilities
+
+  K01 – humanities
+
+  L01 – information science
+
+  M01 – persons
+
+  N01 – population characteristics
+  N02 – health care facilities, manpower, and services
+  N03 – health care economics and organizations
+  N04 – health services administration
+  N05 – health care quality, access, and evaluation
+  N06 - environment and public health
+
+  V01 – publication components
+  V02 – publication formats
+  V03 – study characteristics
+  V04 – support of research
+
+  Z01 – geographic locations
+
+MESH SUBHEADINGS
+
+  abnormalities
+  administration & dosage
+  adverse effects
+  agonists
+  analogs & derivatives
+  analysis
+  anatomy & histology
+  antagonists & inhibitors
+  biosynthesis
+  blood
+  blood supply
+  cerebrospinal fluid
+  chemical synthesis
+  chemically induced
+  chemistry
+  classification
+  complications
+  congenital
+  cytology
+  deficiency
+  diagnosis
+  diagnostic imaging
+  diet therapy
+  drug effects
+  drug therapy
+  economics
+  education
+  embryology
+  enzymology
+  epidemiology
+  ethics
+  ethnology
+  etiology
+  genetics
+  growth & development
+  history
+  immunology
+  injuries
+  innervation
+  instrumentation
+  isolation & purification
+  legislation & jurisprudence
+  manpower
+  metabolism
+  methods
+  microbiology
+  mortality
+  nursing
+  organization & administration
+  parasitology
+  pathogenicity
+  pathology
+  pharmacokinetics
+  pharmacology
+  physiology
+  physiopathology
+  poisoning
+  prevention & control
+  psychology
+  radiation effects
+  radiotherapy
+  rehabilitation
+  secondary
+  secretion
+  standards
+  statistics & numerical data
+  supply & distribution
+  surgery
+  therapeutic use
+  therapy
+  toxicity
+  transmission
+  transplantation
+  trends
+  ultrastructure
+  urine
+  utilization
+  veterinary
+  virology
+
+THEME CODES:
+
+Chemical-Gene
+
+  A+    agonism, activation
+  A-    antagonism, blocking
+  Bc    binding, ligand (especially receptors)
+  Ec+   increases expression/production
+  Ec-   decreases expression/production
+  Ec    affects expression/production (neutral)
+  N     inhibits
+
+Gene-Chemical
+
+  O     transport, channels
+  K     metabolism, pharmacokinetics
+  Z     enzyme activity
+
+Chemical-Disease
+
+  T     treatment/therapy (including investigatory)
+  C     inhibits cell growth (especially cancers)
+  Sa    side effect/adverse event
+  Pr    prevents, suppresses
+  Pa    alleviates, reduces
+  Jc    role in disease pathogenesis
+
+Disease-Chemical
+
+  Mp    biomarkers (of disease progression)
+
+Gene-Disease
+
+  U     causal mutations
+  Ud    mutations affecting disease course
+  D     drug targets
+  Jg    role in pathogenesis
+  Te    possible therapeutic effect
+  Y     polymorphisms alter risk
+  G     promotes progression
+
+Disease-Gene
+
+  Md    biomarkers (diagnostic)
+  X     overexpression in disease
+  L     improper regulation linked to disease
+
+Gene-Gene
+
+  Bg    binding, ligand (especially receptors)
+  W     enhances response
+  V+    activates, stimulates
+  Eg+   increases expression/production
+  Eg    affects expression/production (neutral)
+  I     signaling pathway
+  H     same protein or complex
+  Rg    regulation
+  Q     production by cell population
+
+EOF
+  exit
+fi
+
+if [ -z "$target" ]
+then
+  if [ -z "${EDIRECT_PUBMED_MASTER}" ]
+  then
+    echo "Must supply path to postings files or set EDIRECT_PUBMED_MASTER environment variable"
+    exit 1
+  else
+    MASTER="${EDIRECT_PUBMED_MASTER}"
+    MASTER=${MASTER%/}
+    target="$MASTER/Postings"
+  fi
+else
+  argument="$target"
+  target=$(cd "$argument" && pwd)
+  target=${target%/}
+  case "$target" in
+    */Postings ) ;;
+    * ) target=$target/Postings ;;
+  esac
+fi
+
+osname=`uname -s | sed -e 's/_NT-.*$/_NT/; s/^MINGW[0-9]*/CYGWIN/'`
+if [ "$osname" = "CYGWIN_NT" -a -x /bin/cygpath ]
+then
+  target=`cygpath -w "$target"`
+fi
+
+target=${target%/}
+
+if [ "$debug" = true ]
+then
+  echo "mode: $mode, path: '$target', args: '$*'"
+  exit
+fi
+
+case "$mode" in
+   count )
+     rchive -path "$target" -count "$*" 
+     ;;
+   counts )
+     rchive -path "$target" -counts "$*" 
+     ;;
+   countr )
+     rchive -path "$target" -countr "$*" 
+     ;;
+   countp )
+     rchive -path "$target" -countp "$*" 
+     ;;
+   query )
+     rchive -path "$target" -query "$*"
+     ;;
+   filter )
+     case "$*" in
+       "AND "* | "OR "* | "NOT "* )
+         rchive -path "$target" -query "[PIPE] $*"
+         ;;
+       "[PIPE] "* )
+         rchive -path "$target" -query "$*"
+         ;;
+       *)
+         rchive -path "$target" -query "[PIPE] AND $*"
+         ;;
+     esac
+     ;;
+   search )
+     rchive -path "$target" -search "$*"
+     ;;
+   exact )
+     rchive -path "$target" -exact "$*"
+     ;;
+   mock )
+     rchive -path "$target" -mock "$*"
+     ;;
+   mocks )
+     rchive -path "$target" -mocks "$*"
+     ;;
+   mockx )
+     rchive -path "$target" -mockx "$*"
+     ;;
+   terms )
+     if [ -z "$field" ]
+     then
+       cd "$target"
+       for dr in *
+       do
+         if [ -d "$dr" ]
+         then
+           echo "$dr"
+         fi
+       done
+     else
+       for dr in "$target/$field"/*
+       do
+         if [ -d "$dr" ]
+         then
+           find "$dr" -name "*.$field.trm" -print0 | sort -Vz | xargs -0 cat
+         fi
+       done
+     fi
+     ;;
+esac

@@ -1,0 +1,60 @@
+#!/bin/sh
+
+if [ "$#" -eq 0 ]
+then
+  echo "Must supply path for archive files"
+  exit 1
+fi
+
+archive="$1"
+shift
+
+archive=${archive%/}
+
+if [ "$#" -eq 0 ]
+then
+  echo "Must supply path for current files"
+  exit 1
+fi
+
+target="$1"
+shift
+
+target=${target%/}
+
+find "$target" -name "*.xml" -delete
+find "$target" -name "*.xml.gz" -delete
+
+fr=0
+chunk_size=250000
+if [ -n "${EDIRECT_CHUNK_SIZE}" ]
+then
+  chunk_size="${EDIRECT_CHUNK_SIZE}"
+fi
+to=$((chunk_size - 1))
+loop_max=$((50000000 / chunk_size))
+seq 1 $loop_max | while read n
+do
+  base=$(printf pubmed%03d $n)
+  if [ -f "$target/$base.xml.gz" ]
+  then
+    fr=$((fr + chunk_size))
+    to=$((to + chunk_size))
+    continue
+  fi
+  echo "$base.xml"
+  seconds_start=$(date "+%s")
+  seq -f "%0.f" $fr $to | rchive -stream "$archive" -head "<PubmedArticleSet>" -tail "</PubmedArticleSet>" > "$target/$base.xml.gz"
+  fr=$((fr + chunk_size))
+  to=$((to + chunk_size))
+  seconds_end=$(date "+%s")
+  seconds=$((seconds_end - seconds_start))
+  echo "$seconds seconds"
+  fsize=$(wc -c < "$target/$base.xml.gz")
+  if [ "$fsize" -le 300 ]
+  then
+    rm -f "$target/$base.xml.gz"
+    exit 0
+  fi
+  sleep 1
+done
