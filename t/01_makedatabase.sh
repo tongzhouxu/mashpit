@@ -3,6 +3,10 @@
 here=$BATS_TEST_DIRNAME
 db=$here/test.sqlite
 
+function setup(){
+  rm -rf $db $db.sketches
+}
+
 @test "Create database" {
   run sqlite3 $db < $here/../scripts/mashpit_init.sql
 
