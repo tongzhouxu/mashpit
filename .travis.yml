@@ -13,8 +13,7 @@ addons:
       - sqlite3
       - tree
 before_install:
-  - export PATH=$PATH:$HOME/mashpit/edirect
-  #- ls $HOME/mashpit/edirect
+  - export PATH=$PATH:$HOME/build/lskatz/mashpit/edirect
   - tree $HOME
   - yes | ./edirect/setup.sh
   - wget https://github.com/marbl/Mash/releases/download/v2.2/mash-Linux64-v2.2.tar
