@@ -12,7 +12,8 @@ addons:
       - sra-toolkit
       - sqlite3
 before_install:
-  - export PATH=$PATH:$HOME/mashpit/edirect >& /dev/null || setenv PATH "${PATH}:$HOME/edirect"
+  - export PATH=$PATH:$HOME/mashpit/edirect
+  - ls $HOME/mashpit/edirect
   - yes | ./edirect/setup.sh
   - wget https://github.com/marbl/Mash/releases/download/v2.2/mash-Linux64-v2.2.tar
   - tar xvf mash-Linux64-v2.2.tar
