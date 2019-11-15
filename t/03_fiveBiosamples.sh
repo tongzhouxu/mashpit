@@ -29,19 +29,19 @@ function teardown(){
   $script $db SAMN02182866
   rm -f $lockfile
 }
-@test "Add SAMN02182867 concurrently" {
-  lockfile $lockfile
-  $script $db SAMN02182867
-  rm -f $lockfile
-}
-@test "Add SAMN02182868 concurrently" {
-  lockfile $lockfile
-  $script $db SAMN02182868
-  rm -f $lockfile
-}
 @test "Add SAMN02182869 concurrently" {
   lockfile $lockfile
   $script $db SAMN02182869
+  rm -f $lockfile
+}
+@test "Add SAMN02182871 concurrently" {
+  lockfile $lockfile
+  $script $db SAMN02182871
+  rm -f $lockfile
+}
+@test "Add SAMN02182872 concurrently" {
+  lockfile $lockfile
+  $script $db SAMN02182872
   rm -f $lockfile
 }
 
