@@ -23,5 +23,5 @@ before_install:
   - tar xvf mash-Linux64-v2.2.tar
   - export PATH=$PATH:$(pwd)/mash-Linux64-v2.2
   - chmod -v +x $(pwd)/mash-Linux64-v2.2/mash
-script: bats t/*.sh
+script: bats --tap t/*.sh
 

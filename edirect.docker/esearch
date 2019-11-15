@@ -1,4 +1,4 @@
 #!/bin/bash
 
-docker run --rm -it ncbi/edirect esearch $@
+docker run --rm ncbi/edirect esearch $@
 
