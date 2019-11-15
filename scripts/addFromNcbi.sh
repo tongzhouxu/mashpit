@@ -38,11 +38,6 @@ BIOSAMPLE_ACC=$2
 # Ensure that the sketches directory exists
 mkdir -pv $DB.sketches
 
-LOCKFILE=$DB.sketches/.lock
-# Remove the lockfile if any crash.
-trap ' { rm -rf $LOCKFILE; } ' SIGHUP SIGINT SIGTERM
-lockfile $LOCKFILE
-
 # Create a temporary directory
 TMPDIR=$(mktemp -d MASHPIT.XXXXXX)
 trap ' { rm -rf $TMPDIR; } ' EXIT
@@ -181,5 +176,4 @@ fi
 
 #echo "SKETCH_ID => $SKETCH_ID"
 
-rm -f $LOCKFILE
 
