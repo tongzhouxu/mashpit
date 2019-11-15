@@ -1,5 +1,7 @@
 sudo: false
 language: bash
+services:
+  - docker
 addons:
   apt:
     sources:
@@ -13,9 +15,10 @@ addons:
       - sqlite3
       - tree
 before_install:
-  - export PATH=$PATH:$HOME/build/lskatz/mashpit/edirect
-  - tree $HOME
-  - yes | ./edirect/setup.sh
+  #- export PATH=$PATH:$HOME/build/lskatz/mashpit/edirect
+  #- yes | ./edirect/setup.sh
+  #- tree $HOME
+  - export PATH=$PATH:$HOME/build/lskatz/mashpit/edirect.docker
   - wget https://github.com/marbl/Mash/releases/download/v2.2/mash-Linux64-v2.2.tar
   - tar xvf mash-Linux64-v2.2.tar
   - export PATH=$PATH:$(pwd)/mash-Linux64-v2.2
