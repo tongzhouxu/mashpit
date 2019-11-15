@@ -19,6 +19,7 @@ before_install:
   #- yes | ./edirect/setup.sh
   #- tree $HOME
   - export PATH=$PATH:$HOME/build/lskatz/mashpit/edirect.docker
+  - docker pull ncbi/edirect
   - wget https://github.com/marbl/Mash/releases/download/v2.2/mash-Linux64-v2.2.tar
   - tar xvf mash-Linux64-v2.2.tar
   - export PATH=$PATH:$(pwd)/mash-Linux64-v2.2
