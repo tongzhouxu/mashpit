@@ -11,6 +11,7 @@ addons:
       - procmail
       - sra-toolkit
       - sqlite3
+      - tree
 before_install:
   - export PATH=$PATH:$HOME/mashpit/edirect
   #- ls $HOME/mashpit/edirect
