@@ -50,6 +50,7 @@ TMPDIR=$(mktemp -d MASHPIT.XXXXXX)
 trap ' { rm -rf $TMPDIR; } ' EXIT
 
 # Get ref mash sketch location
+# TODO might want to get taxid to help filter for later query
 BASENAME=$(sqlite3 $DB "
   SELECT SKETCH.path 
   FROM SKETCH
@@ -58,10 +59,9 @@ BASENAME=$(sqlite3 $DB "
   ";
 )
 REFFILE="$DB.sketches/$BASENAME.msh"
-ls $REFFILE
-
 
 # Get a list of files that the database captures
+# TODO might want to filter by taxid
 FOFN="$TMPDIR/fofn.txt"
 sqlite3 $DB "SELECT path FROM SKETCH" |\
   while read BASENAME; do
@@ -71,20 +71,25 @@ sqlite3 $DB "SELECT path FROM SKETCH" |\
 DISTFILE="$TMPDIR/dist.tsv"
 mash dist -t $REFFILE -l $FOFN | grep -v '^#' | sort -k2,2n > $DISTFILE
 
-BIOSAMPLE_MATCHES=""
-cat $DISTFILE | while read -r path dist; do
+FILE_MATCHES=""
+SRR=""
+while read -r path dist; do
   if (( $(echo "$dist > $MAXDIST" | bc -l) )); then
     break;
   fi
-  MATCH=$(sqlite3 $DB "
-    SELECT biosample_acc
-    FROM SKETCH
-    WHERE path='$path'
-    LIMIT 1"
-  )
-  echo $path $MATCH
-  BIOSAMPLE_MATCHES="$BIOSAMPLE_MATCHES $MATCH"
-done
+  FILE_MATCHES="$FILE_MATCHES $path"
+  IFS=. read -r biosample srr ext <<< "$path"
+  SRR="$SRR $srr"
+done < $DISTFILE
 
-echo "$BIOSAMPLE_MATCHES"
+function join_by { local ifs="$1"; shift; str=""; for i in $@; do str="$str$i$ifs"; done; str=${str/%$ifs/}; echo $str;}
+
+IN=$(join_by "','" $SRR)
+sqlite3 -nullvalue . -separator $'\t' -header $DB "
+  /*SELECT S.sketchid, S.biosample_acc, S.srr, S.path, B.strain, B.isolate, B.serovar, B.host_taxid*/
+  SELECT B.*, S.*
+  FROM SKETCH as S
+  LEFT JOIN BIOSAMPLE as B ON B.biosample_acc=S.biosample_acc
+  WHERE SRR IN ('$IN')
+"
 
