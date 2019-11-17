@@ -54,3 +54,14 @@ function addTaxon(){
   return 0;
 }
 
+# Safely add a new biosample 
+# Arguments:
+#   database.sqlite
+#   ...
+# Prints:
+#   biosampleid 
+# Returns:
+#   0 if new biosampleid 
+#   1 if biosample already existed
+function addBiosample(){
+}
