@@ -1,5 +1,0 @@
-#!/bin/sh
-efetch -format fasta |
-eblast |
-xtract -pattern Hit -element Hit_accession |
-epost -db protein -format acc

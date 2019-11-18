@@ -1,7 +1,7 @@
 sudo: false
 language: bash
-services:
-  - docker
+python:
+  - "3.7"
 addons:
   apt:
     sources:
@@ -15,14 +15,21 @@ addons:
       - sqlite3
       - tree
 before_install:
-  #- export PATH=$PATH:$HOME/build/lskatz/mashpit/edirect
-  #- yes | ./edirect/setup.sh
-  #- tree $HOME
-  - export PATH=$PATH:$HOME/build/lskatz/mashpit/edirect.docker
-  - docker pull ncbi/edirect
   - wget https://github.com/marbl/Mash/releases/download/v2.2/mash-Linux64-v2.2.tar
   - tar xvf mash-Linux64-v2.2.tar
   - export PATH=$PATH:$(pwd)/mash-Linux64-v2.2
   - chmod -v +x $(pwd)/mash-Linux64-v2.2/mash
+install:
+  - wget https://repo.continuum.io/miniconda/Miniconda3-latest-Linux-x86_64.sh -O miniconda.sh;
+  - bash miniconda.sh -b -p $HOME/miniconda
+  - source "$HOME/miniconda/etc/profile.d/conda.sh"
+  - hash -r
+  - conda config --set always_yes yes --set changeps1 no
+  - conda update -q conda
+  - conda info -a
+
+  - conda create -q -n edirect-environment python=$TRAVIS_PYTHON_VERSION edirect
+  - conda activate edirect-environment
+  - python setup.py install
 script: bats --tap t/*.sh
 

@@ -1,5 +1,0 @@
-#!/bin/bash -norc
-
-# Usage: exclude-uid-lists FILE1 FILE2
-
-comm -23 <(sort -f "$1") <(sort -f "$2") | sort -n

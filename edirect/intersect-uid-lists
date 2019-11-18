@@ -1,5 +1,0 @@
-#!/bin/bash -norc
-
-# Usage: intersect-uid-lists FILE1 FILE2
-
-comm -12 <(sort -f "$1") <(sort -f "$2") | sort -n
