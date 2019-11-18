@@ -25,6 +25,12 @@ install:
   - source "$HOME/miniconda/etc/profile.d/conda.sh"
   - hash -r
   - conda config --set always_yes yes --set changeps1 no
+    # Add bioconda channels
+  - conda config --add channels conda-forge
+  - conda config --add channels defaults
+  - conda config --add channels r
+  - conda config --add channels bioconda
+    # Continue with some conda things
   - conda update -q conda
   - conda info -a
 
