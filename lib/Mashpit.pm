@@ -102,9 +102,15 @@ sub connect{
   return $dbh;
 }
 
+# Get a taxonomy record by taxid
+sub getTaxonomy{
+  my($self, $taxid) = @_;
+  ...;
+}
+
 # Get a taxonomy record by genus/species/subspecies.
 # Species and subspecies is allowed to be undef.
-sub getTaxonomy{
+sub findTaxonomy{
   my($self,$genus,$species,$subspecies) = @_;
 
   # Do not tolerate undef values
@@ -150,7 +156,7 @@ sub addTaxonomy{
     $_ //= "MISSING";
   }
   
-  my $taxid_db = $self->getTaxonomy($genus,$species,$subspecies);
+  my $taxid_db = $self->findTaxonomy($genus,$species,$subspecies);
   if($taxid_db){
     carp "WARNING: tried to add $genus/$species/$subspecies with taxid $taxid, but it already exists with taxid $taxid_db. Returning $taxid_db instead.";
     return $taxid_db;
@@ -167,40 +173,90 @@ sub addTaxonomy{
   return $taxid;
 }
 
-# Get a biosample record by either the biosample acc
-# or isolate name.
-# The argument is a hash of biosample_acc and/or isolate.
+# Get a biosample record by the biosample acc
+# The argument is biosample_acc
 sub getBiosample{
-  my($self, $keys) = @_;
+  my($self, $biosample_acc) = @_;
+
+  my $sth = $$self{dbh}->prepare(qq(
+    SELECT * 
+    FROM BIOSAMPLE
+    WHERE biosample_acc=?;
+  ))
+    or die "ERROR: $DBI::errstr";
+  $sth->execute($biosample_acc)
+    or die "ERROR: $DBI::errstr";
+
+  my $row = $sth->fetchrow_hashref;
+  return $row;
 }
 
 # Add a biosample. The argument is a hash with keys equal
 # to the fields in the biosample table.
-sub addBioSample{
+sub addBiosample{
   my($self, $keys) = @_;
+
+  if(ref($keys) ne 'HASH'){
+    croak "ERROR: second argument of addBiosample() was not a hash";
+  }
+
+  for my $requiredKey(qw(biosample_acc)){
+    if(!$$keys{$requiredKey}){
+      croak "ERROR: tried to add a biosample but did not supply key $requiredKey";
+    }
+  }
+
+  if(my $biosampleHash = $self->getBiosample($$keys{biosample_acc})){
+    carp "WARNING: tried to add biosample $$keys{biosample_acc} but it already exists!";
+    return $biosampleHash;
+  }
+
+  my $sql = "INSERT INTO BIOSAMPLE (";
+  my $questionMarks = "";
+  my @values = ();
+  for my $key(keys(%$keys)){
+    $sql.=$key.",";
+    $questionMarks .= "?,";
+    push(@values, $$keys{$key});
+  }
+  $sql =~ s/,\s*$//; # remove last comma
+  $questionMarks =~ s/,\s*//;
+
+  $sql.=")\nVALUES($questionMarks);\n";
+
+  my $sth = $$self{dbh}->prepare($sql)
+    or die "ERROR: $DBI::errstr";
+  $sth->execute(@values)
+    or die "ERROR: $DBI::errstr";
+
+  return $self->getBiosample($$keys{biosample_acc});
 }
 
 # Get the entry from the SRA table using either srr or
 # biosample acc.
 sub getSra{
   my($self, $srr, $biosample_acc) = @_;
+  ...;
 }
 
 # Add to SRA table which is just a table linking srr to
 # biosample.
 sub addSra{
   my($self, $srr, $biosample_acc) = @_;
+  ...;
 }
 
 # get sketch(es) by biosample_acc
 # Returns array.
 sub getSketches{
   my($self, $biosample_acc) = @_;
+  ...;
 }
 
 # Add sketch file with biosample_acc
 sub addSketch{
   my($self, $sketch, $biosample_acc) = @_;
+  ...;
 }
 1;
 
