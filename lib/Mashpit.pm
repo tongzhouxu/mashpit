@@ -46,7 +46,7 @@ sub new{
   my $self={
     dir      => $dir,   # path of mashpit directory
     dbFile   => $dbFile,# database path
-    dbh      => undef,  # DBI object for $dbFile
+    dbh      => undef,  # DBD::SQLite object
   };
   bless($self,$class);
 
@@ -101,4 +101,106 @@ sub connect{
   
   return $dbh;
 }
+
+# Get a taxonomy record by genus/species/subspecies.
+# Species and subspecies is allowed to be undef.
+sub getTaxonomy{
+  my($self,$genus,$species,$subspecies) = @_;
+
+  # Do not tolerate undef values
+  if(!defined($genus)){
+    croak "ERROR: genus is undefined";
+  }
+  # If species or subspecies is undef, set them.
+  for($species,$subspecies){
+    $_ //= "MISSING";
+  }
+
+  my $sth = $$self{dbh}->prepare(qq(
+    SELECT taxid
+    FROM TAXONOMY
+    WHERE genus=?
+      AND species=?
+      AND subspecies=?;
+    )
+  )
+    or die "ERROR: $DBI::errstr";
+  $sth->execute($genus,$species,$subspecies)
+    or die "ERROR: $DBI::errstr";
+
+  my $row = $sth->fetch;
+  if(ref($row) eq 'ARRAY'){
+    return $$row[0];
+  }
+  
+  return 0;
+}
+
+# Add a taxonomy record with genus/species/subspecies.
+# Species and subspecies can be blank.
+sub addTaxonomy{
+  my($self,$taxid,$genus,$species,$subspecies) = @_;
+
+  # Do not tolerate undef values
+  if(!defined($genus)){
+    croak "ERROR: genus is undefined";
+  }
+  # If species or subspecies is undef, set them.
+  for($species,$subspecies){
+    $_ //= "MISSING";
+  }
+  
+  my $taxid_db = $self->getTaxonomy($genus,$species,$subspecies);
+  if($taxid_db){
+    carp "WARNING: tried to add $genus/$species/$subspecies with taxid $taxid, but it already exists with taxid $taxid_db. Returning $taxid_db instead.";
+    return $taxid_db;
+  }
+
+  my $sth = $$self{dbh}->prepare(qq(
+    INSERT INTO TAXONOMY (taxid, genus, species, subspecies)
+    VALUES (?,?,?,?);
+  ))
+    or die "ERROR: $DBI::errstr";
+  $sth->execute($taxid,$genus,$species,$subspecies)
+    or die "ERROR: $DBI::errstr";
+  
+  return $taxid;
+}
+
+# Get a biosample record by either the biosample acc
+# or isolate name.
+# The argument is a hash of biosample_acc and/or isolate.
+sub getBiosample{
+  my($self, $keys) = @_;
+}
+
+# Add a biosample. The argument is a hash with keys equal
+# to the fields in the biosample table.
+sub addBioSample{
+  my($self, $keys) = @_;
+}
+
+# Get the entry from the SRA table using either srr or
+# biosample acc.
+sub getSra{
+  my($self, $srr, $biosample_acc) = @_;
+}
+
+# Add to SRA table which is just a table linking srr to
+# biosample.
+sub addSra{
+  my($self, $srr, $biosample_acc) = @_;
+}
+
+# get sketch(es) by biosample_acc
+# Returns array.
+sub getSketches{
+  my($self, $biosample_acc) = @_;
+}
+
+# Add sketch file with biosample_acc
+sub addSketch{
+  my($self, $sketch, $biosample_acc) = @_;
+}
+1;
 
