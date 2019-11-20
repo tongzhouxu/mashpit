@@ -5,12 +5,15 @@ use Getopt::Long qw/GetOptions/;
 use Data::Dumper;
 use Bio::DB::EUtilities;
 use Sys::Hostname qw/hostname/;
+use List::MoreUtils qw/uniq/;
 
 use FindBin qw/$RealBin/;
 use lib "$RealBin/../lib";
-use Mashpit;
+use Mashpit qw/logmsg/;
+use XML::Hash;
 
 my $email = $ENV{USER} . '@' . hostname();
+my $MP; # Global mashpit instance, set in main()
 exit(main());
 
 sub main{
@@ -21,37 +24,178 @@ sub main{
   my($db, $biosample_acc) = @ARGV;
 
   die "ERROR: database does not exist: $db" if(!-e $db);
+  $MP = Mashpit->new($db);
 
-  my $mp = Mashpit->new($db);
+  my $taxid         = getTaxonInfo($biosample_acc, $settings);
   my $biosampleInfo = getBiosampleInfo($biosample_acc, $settings);
 
   return 0;
 }
 
-sub getBiosampleInfo{
+# Get the taxonomy id and if it's in the database, great.
+# If not in the database, add it.
+sub getTaxonInfo{
   my($biosample_acc, $settings) = @_;
+  my $taxid = 0;
+
   my $esearch = Bio::DB::EUtilities->new(-eutil  => "esearch",
                                          -db     => "biosample",
                                          -term   => "$biosample_acc",
                                          -email  => $email,
                                          -usehistory => "y",
                                         );
-  my @ids = $esearch->get_ids;
+  my @id    = $esearch->get_ids;
 
-  while(my $docsum = $esearch->next_DocSum){
-    die Dumper $docsum, 1;
-  }
-  die;
-  for my $id(@ids){
-    my $efetch = Bio::DB::EUtilities->new(-eutil   => "efetch",
-                                          -db      => "biosample",
-                                          -id      => $id,
-                                         );
-    die Dumper $efetch, $efetch->get_ids;
+  my $elink = Bio::DB::EUtilities->new(-eutil   => "elink",
+                                       -db      => "taxonomy",
+                                       -target  => "taxonomy",
+                                       -dbFrom  => "biosample",
+                                       -usehistory=>"y",
+                                       -email   => $email,
+                                       -id      => \@id,
+                                      );
+  my @taxid = uniq $elink->get_ids;
+
+  if(@taxid > 1){
+    logmsg "WARNING: found more than one taxid for $biosample_acc. Will only use $taxid[0].";
+    logmsg "All taxids found: ". join(" ", @taxid);
   }
 
-  die "ERROR: no biosample returned using $biosample_acc";
+  my $efetch = Bio::DB::EUtilities->new(-eutil   => "efetch",
+                                        -db      => "taxonomy",
+                                        -email   => $email,
+                                        -id      => \@taxid,
+                                        -rettype => "xml",
+                                       );
+  my $count = $esearch->get_count;
+  my($retry, $retmax, $retstart) = (0, 500, 0);
+  RETRIEVE_TAXONOMY:
+  while($retstart < $count){
+    $efetch->set_parameters(-retmax   => $retmax,
+                            -retstart => $retstart);
+    my $xml = "";
+    eval{
+      $efetch->get_Response(-cb=>sub{
+          my($data) = @_;
+          $xml .= $data;
+      });
+    };
+    if($@ || !$xml){
+      die "Server error: $@. Try again later" if($retry==5);
+      logmsg "Server error, redo #$retry";
+      $retry++ && next RETRIEVE_TAXONOMY;
+    }
+
+    my $xmlConverter = XML::Hash->new();
+    my $taxonomyHash = $xmlConverter->fromXMLStringtoHash($xml);
+
+    # Now let's get a hash of %rank=> {genus=>{text=>Salmonella, taxid=>590}, species=>{...}, ...}
+    my %rank;
+    for my $rankInfo(@{ $$taxonomyHash{TaxaSet}{Taxon}{LineageEx}{Taxon} }){
+      my($taxid, $rankKey, $rankValue) = ($$rankInfo{TaxId}{text}, $$rankInfo{Rank}{text}, $$rankInfo{ScientificName}{text});
+      next if($rankKey eq 'no rank' || !$rankKey);
+      $rank{$rankKey} = {taxid=>$taxid, text=>$rankValue};
+    }
+    
+    # For each genus, species, subspecies, add the taxonomy
+    # to the database if it isn't already in there.
+    my $mpGenusTaxid = $MP->getTaxonomy($rank{genus}{taxid});
+    if(!$mpGenusTaxid){
+      $mpGenusTaxid = $MP->addTaxonomy($rank{genus}{taxid}, $rank{genus}{text});
+    }
+    my $mpSpeciesTaxid = $MP->getTaxonomy($rank{species}{taxid});
+    if(!$mpSpeciesTaxid){
+      $mpSpeciesTaxid = $MP->addTaxonomy($rank{species}{taxid}, $rank{genus}{text}, $rank{species}{text});
+    }
+    my $mpSubspeciesTaxid = $MP->getTaxonomy($rank{subspecies}{taxid});
+    if(!$mpSubspeciesTaxid){
+      $mpSubspeciesTaxid = $MP->addTaxonomy($rank{subspecies}{taxid}, $rank{genus}{text}, $rank{species}{text}, $rank{subspecies}{text});
+    }
+    my $taxid = $rank{subspecies}{taxid} || $rank{species}{taxid} || $rank{genus}{taxid}
+                || die "ERROR: no taxonomy id was found for $biosample_acc";
+
+    return $taxid;
+
+    $retstart++;
+  }
+  
+  die "Internal error getting taxonomy ID";
 }
+
+sub getBiosampleInfo{
+  my($biosample_acc, $settings) = @_;
+
+  my @biosampleInfo;
+  
+  my $esearch = Bio::DB::EUtilities->new(-eutil  => "esearch",
+                                         -db     => "biosample",
+                                         -term   => "$biosample_acc",
+                                         -email  => $email,
+                                         -usehistory => "y",
+                                        );
+  my $count = $esearch->get_count;
+  my $hist = $esearch->next_History || die "No history data returned";
+  $esearch->set_parameters(-eutil   => "efetch",
+                           -rettype => "xml",
+                           -history => $hist,
+                          );
+  
+  my($retry, $retmax, $retstart) = (0, 500, 0);
+  RETRIEVE_BIOSAMPLE:
+  while($retstart < $count){
+    $esearch->set_parameters(-retmax   => $retmax,
+                             -retstart => $retstart);
+    my $xml = "";
+    eval{
+      $esearch->get_Response(-cb=>sub{
+          my($data) = @_;
+          $xml .= $data;
+      });
+    };
+    if($@ || !$xml){
+      die "Server error: $@. Try again later" if($retry==5);
+      logmsg "Server error, redo #$retry";
+      $retry++ && next RETRIEVE_BIOSAMPLE;
+    }
+
+    my $mashpitBiosample = parseBiosampleXml($xml);
+
+    #print Dumper $biosampleInfo,$retry, $retstart, $count,'===';
+    push(@biosampleInfo, $mashpitBiosample);
+    $retstart++;
+  }
+
+  return \@biosampleInfo;
+}
+
+# Parse biosample information for our sql schema
+# Needed: biosample_acc, strain, isolate, taxid, collected_by,
+# collection_date, latitude, longitude, host_taxid, host_disease,
+# isolation_source, serovar
+sub parseBiosampleXml{
+  my($xml) = @_;
+  my $xmlConverter = XML::Hash->new();
+  my $biosampleHash = $xmlConverter->fromXMLStringtoHash($xml);
+
+  my %h = ();
+  
+  if(defined($$biosampleHash{BioSampleSet}{BioSample}{Attributes}{Attribute})){
+    my $attribute = $$biosampleHash{BioSampleSet}{BioSample}{Attributes}{Attribute};
+    for my $a(@$attribute){
+      $h{$$a{attribute_name}} = $$a{text};
+    }
+  }
+  
+  my $organism = $$biosampleHash{BioSampleSet}{BioSample}{Description}{Organism};
+  $h{taxid} = $$organism{taxonomy_id};
+  $h{latitude}  = $h{lat_lon}; # TODO parse correctly
+  $h{longitude} = $h{lat_lon}; # TODO parse correctly
+  $h{host_taxid}= 'missing';   # TODO
+  $h{host_disease}='missing';  # TODO
+
+  return \%h;
+}
+
 
 sub usage{
   print "Usage: $0 mashpitDb biosample_acc
