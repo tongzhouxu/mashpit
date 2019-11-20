@@ -30,6 +30,7 @@ WriteMakefile1(
     'FindBin'        => 0,
     'Exporter'       => 0,
     'Getopt::Long'   => 0,
+    'List::MoreUtils'=> 0,
     # Not core (I think?)
     'DBI'            => 0,
     'DBD::SQLite'    => 0,
