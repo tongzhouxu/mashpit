@@ -15,6 +15,7 @@ use lib dirname($INC{"Mashpit.pm"});
 our @EXPORT_OK = qw(
            @fastqExt @fastaExt @richseqExt @mshExt
            $MASHPIT_VERSION
+           logmsg
          );
 
 local $0=basename $0;
@@ -54,7 +55,7 @@ sub new{
   return $self;
 }
 
-# Create an SQLite database for genome distances.
+# Create an SQLite database
 sub selectDb{
   my($self, $dbFile)=@_;
 
@@ -105,7 +106,21 @@ sub connect{
 # Get a taxonomy record by taxid
 sub getTaxonomy{
   my($self, $taxid) = @_;
-  ...;
+  my $sth = $$self{dbh}->prepare(qq(
+    SELECT taxid
+    FROM TAXONOMY
+    WHERE taxid=?;
+  ))
+    or die "ERROR: $DBI::errstr";
+  $sth->execute($taxid)
+    or die "ERROR: $DBI::errstr";
+
+  my $row = $sth->fetch;
+  if(ref($row) eq 'ARRAY'){
+    return $$row[0];
+  }
+  
+  return 0;
 }
 
 # Get a taxonomy record by genus/species/subspecies.
