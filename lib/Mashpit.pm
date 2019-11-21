@@ -23,7 +23,7 @@ local $0=basename $0;
 ######
 # CONSTANTS
 
-our $VERSION = "0.3";
+our $VERSION = "0.4";
 our $MASHPIT_VERSION=$VERSION;
 our @fastqExt=qw(.fastq.gz .fastq .fq .fq.gz);
 our @fastaExt=qw(.fasta .fna .faa .mfa .fas .fsa .fa);
