@@ -34,6 +34,7 @@ our @mshExt=qw(.msh);
 our @richseqExt=qw(.gb .gbank .genbank .gbk .gbs .gbf .embl .ebl .emb .dat .swiss .sp);
 
 sub logmsg{print STDERR "$0: @_\n";}
+
 # Must supply the path as the first argument
 sub new{
   my($class,$dir,$settings)=@_;
