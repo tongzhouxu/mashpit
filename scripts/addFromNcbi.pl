@@ -26,8 +26,14 @@ sub main{
   die "ERROR: database does not exist: $db" if(!-e $db);
   $MP = Mashpit->new($db);
 
+  # Taxonomy info
   my $taxid         = getTaxonInfo($biosample_acc, $settings);
+  # Biosample info
   my $biosampleInfo = getBiosampleInfo($biosample_acc, $settings);
+  # SRA info
+  my $srr           = getSraInfo($biosample_acc, $settings);
+  # Sketch info
+  die "TODO sketch info";
 
   return 0;
 }
@@ -196,6 +202,66 @@ sub parseBiosampleXml{
   return \%h;
 }
 
+sub getSraInfo{
+  my($biosample_acc, $settings) = @_;
+
+  my $taxid = 0;
+
+  my $esearch = Bio::DB::EUtilities->new(-eutil  => "esearch",
+                                         -db     => "biosample",
+                                         -term   => "$biosample_acc",
+                                         -email  => $email,
+                                         -usehistory => "y",
+                                        );
+  my @id    = $esearch->get_ids;
+
+  my $elink = Bio::DB::EUtilities->new(-eutil   => "elink",
+                                       -db      => "sra",
+                                       -target  => "sra",
+                                       -dbFrom  => "biosample",
+                                       -usehistory=>"y",
+                                       -email   => $email,
+                                       -id      => \@id,
+                                      );
+  my @srr = uniq $elink->get_ids;
+
+  if(@srr > 1){
+    logmsg "WARNING: found more than one run id for $biosample_acc. Will only use $srr[0].";
+    logmsg "All run ids found: ". join(" ", @srr);
+  }
+
+  my $efetch = Bio::DB::EUtilities->new(-eutil   => "efetch",
+                                        -db      => "sra",
+                                        -email   => $email,
+                                        -id      => \@srr,
+                                        -rettype => "xml",
+                                       );
+  my $count = $esearch->get_count;
+  my($retry, $retmax, $retstart) = (0, 500, 0);
+  RETRIEVE_SRA:
+  while($retstart < $count){
+    $efetch->set_parameters(-retmax   => $retmax,
+                            -retstart => $retstart);
+    my $xml = "";
+    eval{
+      $efetch->get_Response(-cb=>sub{
+          my($data) = @_;
+          $xml .= $data;
+      });
+    };
+    if($@ || !$xml){
+      die "Server error: $@. Try again later" if($retry==5);
+      logmsg "Server error, redo #$retry";
+      $retry++ && next RETRIEVE_SRA;
+    }
+
+    my $xmlConverter = XML::Hash->new();
+    my $sraHash = $xmlConverter->fromXMLStringtoHash($xml);
+    die Dumper $sraHash;
+    
+    $retstart++;
+  }
+}
 
 sub usage{
   print "Usage: $0 mashpitDb biosample_acc
