@@ -44,6 +44,10 @@ sub new{
     mkdir ($dir) 
       or croak("ERROR: could not make directory $dir: $!");
   }
+  if(! -d "$dir/sketches"){
+    mkdir "$dir/sketches"
+      or croak("ERROR: could not make directory $dir/sketches: $!");
+  }
 
   my $self={
     dir      => $dir,   # path of mashpit directory
@@ -95,7 +99,7 @@ sub connect{
 
   my $dbFile=$self->{dbFile};
   my $dbh=DBI->connect("dbi:SQLite:dbname=$dbFile","","",{
-      RaiseError => 1,
+      RaiseError => 0,
   });
   $dbh->do("PRAGMA foreign_keys = ON");
   
@@ -236,14 +240,14 @@ sub addBiosample{
     push(@values, $$keys{$key});
   }
   $sql =~ s/,\s*$//; # remove last comma
-  $questionMarks =~ s/,\s*//;
+  $questionMarks =~ s/,\s*$//;
 
   $sql.=")\nVALUES($questionMarks);\n";
 
   my $sth = $$self{dbh}->prepare($sql)
-    or die "ERROR: $DBI::errstr";
+    or die "ERROR preparing with \n$sql\n: $DBI::errstr";
   $sth->execute(@values)
-    or die "ERROR: $DBI::errstr";
+    or die "ERROR:\n$sql\n@values\n$DBI::errstr";
 
   return $self->getBiosample($$keys{biosample_acc});
 }
