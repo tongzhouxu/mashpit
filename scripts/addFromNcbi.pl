@@ -140,7 +140,6 @@ sub getBiosampleInfo{
   # Does it already exist?  If so, just return.
   my $dbBiosample = $MP->getBiosample($biosample_acc);
   if(defined($dbBiosample)){
-    die Dumper $dbBiosample, "Line ".__LINE__;
     return $dbBiosample;
   }
 
@@ -178,6 +177,13 @@ sub getBiosampleInfo{
     }
 
     my $mashpitBiosample = parseBiosampleXml($xml);
+    # If the taxid isn't present, then add it
+    if(! $MP->getTaxonomy($$mashpitBiosample{taxid})){
+      ...;
+      # might need to query for genus/species/subspecies
+      # Wonder if I should use taxdb as a way to cut down on web queries.
+      #$MP->addTaxonomy($rank{subspecies}{taxid}, $rank{genus}{text}, $rank{species}{text}, $rank{subspecies}{text});
+    }
     my $tmp = $MP->addBiosample($mashpitBiosample);
     die Dumper $tmp;
 

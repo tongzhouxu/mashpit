@@ -3,7 +3,10 @@ CREATE TABLE IF NOT EXISTS TAXONOMY(
   genus     TEXT,
   species   TEXT,
   subspecies TEXT,
-  UNIQUE    (genus, species, subspecies),
+  /* some subspecies could have multiple taxids because
+     of serovars, individualized taxids, etc
+  */
+  UNIQUE    (taxid, genus, species, subspecies),
   UNIQUE    (taxid)
 );
 
