@@ -2,7 +2,6 @@
 
 import sqlite3
 import subprocess
-import xml.etree.ElementTree as ET
 from sqlite3 import Error
 from Bio import Entrez
 
