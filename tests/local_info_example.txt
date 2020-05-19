@@ -1,2 +1,0 @@
-  SAMN000000 0000 A0000 collector 2000-00-00 geo_loc_name isolation_source lat_lon genotype host host_disease 
-  
