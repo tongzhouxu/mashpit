@@ -12,7 +12,6 @@ python3 create_db.py
 ```
 usage: metadata_sra_db.py -source <source> -list <name> -email <Entrez email address> -key <Entrez API key>
 
-optional arguments:
   -h, --help      show this help message and exit
   -source SOURCE  <int>: source of data. 0: bioproject list, 1: biosample list, 2: name
   -list LIST      <string>: full name of the list file
@@ -44,9 +43,9 @@ python3 sketch_db.py
 ```
 usage: query_against_db.py -n <sample name>
 
-optional arguments:
   -h, --help  show this help message and exit
   -n N        <string>: sample SRR name
+  -f, --force  overwrite if query table exists
 ```
 - Example command
   ```
@@ -61,4 +60,5 @@ optional arguments:
 - Python packages:
   - Biopython
   - sqlite3
+  - pandas
 - Mash 2.2.2
