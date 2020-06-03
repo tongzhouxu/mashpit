@@ -3,6 +3,7 @@
 import argparse
 import csv
 import subprocess
+import pandas as pd
 from create_db import create_connection
 from create_db import create_table
 
@@ -10,6 +11,7 @@ from create_db import create_table
 def parse_args():
     parser = argparse.ArgumentParser(usage='query_against_db.py -n <sample name>')
     parser.add_argument("-n", help="<string>: sample SRR name")
+    parser.add_argument("-f", "--force", help="overwrite if query table exists", action="store_true")
     return parser.parse_args()
 
 
@@ -44,6 +46,19 @@ def main():
                                   host_disease     TEXT,
                                   mash_distance    REAL
                           )""")
+    c = conn.cursor()
+    c.execute("""SELECT count(name) FROM sqlite_master WHERE type='table' AND name='""" + sample_name + """_output' """)
+    if c.fetchone()[0] == 1:
+        if args.force:
+            c.execute("""DROP TABLE """ + sample_name + """_output""")
+            c.execute("""DROP TABLE """ + sample_name + """_distance""")
+        else:
+            print("Query result exists. Use option -f to overwrite the result")
+            exit()
+
+    c.close()
+    conn.commit()
+
     if conn is not None:
         create_table(conn, sql_create_distance)
         create_table(conn, sql_create_output)
@@ -84,8 +99,9 @@ def main():
                  From biosample
                  INNER JOIN """ + sample_name + """_distance
                  ON biosample.biosample_acc=""" + sample_name + """_distance.biosample_acc""")
-
-    print("Exporting data into CSV……")
+    print("Printing out the top 50 results.")
+    print(pd.read_sql_query("SELECT * FROM " + sample_name + "_output ORDER BY mash_distance ASC LIMIT 50", conn))
+    print("Output file has been stored in the database table " + sample_name + "_output and exported in CSV format.")
     c.execute("SELECT * FROM " + sample_name + "_output ORDER BY mash_distance ASC")
     with open(sample_name + "output.csv", "w") as csv_file:
         csv_writer = csv.writer(csv_file, delimiter="\t")
