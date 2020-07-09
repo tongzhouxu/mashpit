@@ -1,7 +1,14 @@
 #!/usr/bin/env python3
 
+import argparse
 import sqlite3
 from sqlite3 import Error
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(usage='create_db.py -database <database name>')
+    parser.add_argument("-database", help="<string>: name of the database")
+    return parser.parse_args()
 
 
 # Define the methods to create the database
@@ -26,7 +33,8 @@ def create_table(conn, create_table_sql):
 
 
 def main():
-    conn = create_connection('mashpit.db')
+    args = parse_args()
+    conn = create_connection(args.database+'.db')
 
     # define and create the tables in the database
 
@@ -52,27 +60,10 @@ def main():
                           ON UPDATE CASCADE
                         );"""
 
-    sql_create_sketch = """CREATE TABLE IF NOT EXISTS SKETCH (
-                           sketchid      INTEGER PRIMARY KEY AUTOINCREMENT,
-                           biosample_acc TEXT NOT NULL,
-                           srr           TEXT NOT NULL,
-                           path          TEXT NOT NULL,
-                           source        TEXT NOT NULL, 
-                           software      TEXT NOT NULL, 
-                           seed          INTEGER NOT NULL,
-                           UNIQUE    (path),
-                           FOREIGN KEY (srr) REFERENCES SRA(srr)
-                           ON DELETE CASCADE
-                           ON UPDATE CASCADE,
-                           FOREIGN KEY (biosample_acc) REFERENCES BIOSAMPLE(biosample_acc)
-                           ON DELETE CASCADE
-                           ON UPDATE CASCADE
-                        );"""
 
     if conn is not None:
         create_table(conn, sql_create_biosample)
         create_table(conn, sql_create_sra)
-        create_table(conn, sql_create_sketch)
         conn.commit()
         conn.close()
     else:

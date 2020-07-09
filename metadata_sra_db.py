@@ -1,19 +1,22 @@
 #!/usr/bin/env python3
 
 import argparse
+import os.path
 import xml.etree.ElementTree as ET
 from Bio import Entrez
 from create_db import create_connection
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(usage='metadata_sra_db.py -source <source> -list <name> -email <Entrez email '
-                                           'address> -key <Entrez API key>')
-    parser.add_argument("-source", help="<int>: source of data. 0: bioproject list, 1: biosample list, 2: name")
+    parser = argparse.ArgumentParser(usage='metadata_sra_db.py -database <database name> -method <method> -list '
+                                           '<accession list> (-term <keyword>) -email <Entrez email address> -key '
+                                           '<Entrez API key>')
+    parser.add_argument("-database", help="<string>: name of the database")
+    parser.add_argument("-method", help="<int>: data collecting method. 0: bioproject list, 1: biosample list, 2: name")
     parser.add_argument("-list", help="<string>: full name of the list file")
     parser.add_argument("-email", help="<string>: entrez email address")
     parser.add_argument("-key", help="<string>: entrez api key")
-    parser.add_argument("-term", help="<string>: specie/serovar name")
+    parser.add_argument("-term", help="<string>: specie/serovar name when using keyword to collect data")
     return parser.parse_args()
 
 
@@ -101,10 +104,13 @@ def main():
     args = parse_args()
     Entrez.email = args.email
     Entrez.api_key = args.key
+    if os.path.exists(args.database+'.db'):
+        conn = create_connection(args.database+'.db')
+    else:
+        print("Database does not exist. Please make sure the name is correct or run create_db.py first")
+        exit(0)
 
-    conn = create_connection('mashpit.db')
-
-    if int(args.source) == 0:
+    if int(args.method) == 0:
         f = open(args.list, 'r')
         project_list = f.readlines()
         for project in project_list:
@@ -121,7 +127,7 @@ def main():
                 metadata_sra_by_biosample_id(record['Id'], conn)
             conn.commit()
         f.close()
-    elif int(args.source) == 1:
+    elif int(args.method) == 1:
         f = open(args.list, 'r')
         biosample_list = f.readlines()
         for biosample in biosample_list:
@@ -133,7 +139,7 @@ def main():
             metadata_sra_by_biosample_id(id_list[0], conn)
             conn.commit()
         f.close()
-    elif int(args.source) == 2:
+    elif int(args.method) == 2:
         handle_search = Entrez.esearch(db="biosample", term=args.term, retmax=100000)
         record_search = Entrez.read(handle_search)
         id_list = record_search['IdList']
