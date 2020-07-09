@@ -5,51 +5,68 @@ Create a database of mash sketches and find the most similar genome to the targe
 
 #### Create the database
 ```
-python3 create_db.py
-```
+usage: create_db.py -database <database name>
 
+optional arguments:
+  -h, --help          show this help message and exit
+  -database DATABASE  <string>: name of the database
+```
+- Example command
+```
+create_db.py -database reading
+```
 #### Collect the metadata
 ```
-usage: metadata_sra_db.py -source <source> -list <name> -email <Entrez email address> -key <Entrez API key>
+usage: metadata_sra_db.py -database <database name> -method <method> -list <accession list> (-term <keyword>) -email <Entrez email address> -key <Entrez API key>
 
-  -h, --help      show this help message and exit
-  -source SOURCE  <int>: source of data. 0: bioproject list, 1: biosample list, 2: name
-  -list LIST      <string>: full name of the list file
-  -email EMAIL    <string>: entrez email address
-  -key KEY        <string>: entrez api key
-  -term TERM      <string>: specie/serovar name
+optional arguments:
+  -h, --help          show this help message and exit
+  -database DATABASE  <string>: name of the database
+  -method METHOD      <int>: data collecting method. 0: bioproject list, 1:
+                      biosample list, 2: name
+  -list LIST          <string>: full name of the list file
+  -email EMAIL        <string>: entrez email address
+  -key KEY            <string>: entrez api key
+  -term TERM          <string>: specie/serovar name when using keyword to
+                      collect data
 ```
 More information about Entrez API key can be found on [this page.](https://ncbiinsights.ncbi.nlm.nih.gov/2017/11/02/new-api-keys-for-the-e-utilities/)
 - Example command
   - Using BioProject list
   ```
-  python3 metadata_sra_db.py -source 0 -email your_email -key your_key -list project_list.txt
+  metadata_sra_db.py -source 0 -email your_email -key your_key -list project_list.txt
   ```
   - Using BioSample list
   ```
-  python3 metadata_sra_db.py -source 1 -list biosample_list.txt -email your_email -key your_key
+  metadata_sra_db.py -source 1 -list biosample_list.txt -email your_email -key your_key
   ```
   - Using keyword
   ```
-  python3 metadata_sra_db.py -source 2 -email your_email -key your_key -term salmonella_reading
+  metadata_sra_db.py -source 2 -email your_email -key your_key -term salmonella_reading
   ```
 
 #### Get the assembly and sketch files for all the entries in the database
 ```
-python3 sketch_db.py
+usage: sketch_db.py -database <database name>
+
+optional arguments:
+  -h, --help          show this help message and exit
+  -database DATABASE  <string>: name of the database
 ```
 
 #### Query in the database
 ```
-usage: query_against_db.py -n <sample name>
+usage: query_against_db.py -n <sample name> -database <database name>
 
-  -h, --help  show this help message and exit
-  -n N        <string>: sample SRR name
-  -f, --force  overwrite if query table exists
+optional arguments:
+  -h, --help          show this help message and exit
+  -n N                <string>: sample file name
+  -database DATABASE  <string>: name of the database
+  -f, --force         overwrite if query table exists
 ```
 - Example command
   ```
-  python3 query_against_db.py -n SRR11305724
+  python3 query_against_db.py -n test_sample -database reading
   ```
 
 ## Installation
@@ -61,4 +78,4 @@ usage: query_against_db.py -n <sample name>
   - Biopython
   - sqlite3
   - pandas
-- Mash 2.2.2
+- Sourmash 3.3.1
