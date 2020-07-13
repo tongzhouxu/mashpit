@@ -84,6 +84,7 @@ def main():
                                   genotype         TEXT,
                                   host             TEXT,
                                   host_disease     TEXT,
+                                  outbreak         TEXT,
                                   jaccard_similarity    REAL
                           )""")
 
@@ -115,6 +116,7 @@ def main():
                  biosample.genotype,
                  biosample.host,
                  biosample.host_disease,
+                 biosample.outbreak,
                  """ + sample_name + """_distance.jaccard_similarity 
                  From BIOSAMPLE
                  INNER JOIN """ + sample_name + """_distance

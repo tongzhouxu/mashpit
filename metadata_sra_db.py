@@ -23,7 +23,7 @@ def parse_args():
 # Define methods to insert information into the BIOSAMPLE and SRA database
 def insert_biosample(conn, info):
     sql = '''INSERT INTO BIOSAMPLE(biosample_acc,taxid,strain,collected_by,collection_date,geo_loc_name,
-    isolation_source,lat_lon,genotype,host,host_disease) VALUES(?,?,?,?,?,?,?,?,?,?,?) '''
+    isolation_source,lat_lon,genotype,host,host_disease,outbreak) VALUES(?,?,?,?,?,?,?,?,?,?,?,?) '''
     cur = conn.cursor()
     cur.execute(sql, info)
     return cur.lastrowid
@@ -51,7 +51,7 @@ def metadata_sra_by_biosample_id(id, conn):
     root_sra = ET.fromstring(xml_result_sra)
     info = {'biosample_acc': None, 'taxid': None, 'strain': None, 'collected_by': None, 'collection_date': None,
             'geo_loc_name': None, 'isolation_source': None, 'lat_lon': None, 'genotype': None, 'host': None,
-            'host_disease': None}
+            'host_disease': None, 'outbreak':None}
     info_sra = {'srr': None, 'biosample_acc': None}
 
     taxid = root_sra.find('EXPERIMENT_PACKAGE').find('SAMPLE').find('SAMPLE_NAME').find('TAXON_ID').text
@@ -79,6 +79,8 @@ def metadata_sra_by_biosample_id(id, conn):
             info['host'] = item.find('VALUE').text
         elif item.find('TAG').text == 'host_disease':
             info['host_disease'] = item.find('VALUE').text
+        elif item.find('TAG').text == 'outbreak':
+            info['outbreak'] = item.find('VALUE').text
     # get the xml formatted information for the biosample
     handle_fetch_biosample = Entrez.efetch(db='biosample', id=id)
     xml_result_biosample = handle_fetch_biosample.read()

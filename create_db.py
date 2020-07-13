@@ -49,7 +49,8 @@ def main():
                               lat_lon          TEXT,
                               genotype         TEXT,
                               host             TEXT,
-                              host_disease     TEXT
+                              host_disease     TEXT,
+                              outbreak         TEXT
                         );"""
 
     sql_create_sra = """CREATE TABLE IF NOT EXISTS SRA (
