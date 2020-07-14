@@ -24,7 +24,7 @@ def skesa_assembly_download(SRR):
             "database/" + SRR + "_skesa.fa", shell=True)
         print("Downloaded assembly for " + SRR)
     except subprocess.CalledProcessError:
-        print("Can't download SKEASA assembly for " + SRR)
+        print("Can't download SKESA assembly for " + SRR)
         return
 
 
