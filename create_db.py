@@ -6,16 +6,16 @@ from sqlite3 import Error
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(usage='create_db.py -database <database name>')
-    parser.add_argument("-database", help="<string>: name of the database")
+    parser = argparse.ArgumentParser(usage='create_db.py <database name>')
+    parser.add_argument("database", help="<string>: name of the database")
     return parser.parse_args()
 
 
-# Define the methods to create the database
+# Define the method to create the database and connect to the database
 def create_connection(db_file):
     conn = None
     try:
-        conn = sqlite3.connect(db_file)
+        conn = sqlite3.connect(db_file,check_same_thread = False)
         return conn
     except Error as e:
         print(e)
@@ -23,7 +23,7 @@ def create_connection(db_file):
     return conn
 
 
-# Define the methods to create the tables
+# Define the method to create the tables
 def create_table(conn, create_table_sql):
     try:
         c = conn.cursor()
@@ -34,10 +34,9 @@ def create_table(conn, create_table_sql):
 
 def main():
     args = parse_args()
-    conn = create_connection(args.database+'.db')
+    conn = create_connection(args.database + '.db')
 
     # define and create the tables in the database
-
     sql_create_biosample = """CREATE TABLE IF NOT EXISTS BIOSAMPLE (
                               biosample_acc    TEXT PRIMARY KEY, 
                               taxid            INTEGER,
@@ -47,7 +46,10 @@ def main():
                               geo_loc_name     TEXT,
                               isolation_source TEXT,
                               lat_lon          TEXT,
-                              genotype         TEXT,
+                              serovar          TEXT,
+                              sub_species      TEXT,
+                              Species          TEXT,
+                              Genus            TEXT,
                               host             TEXT,
                               host_disease     TEXT,
                               outbreak         TEXT
@@ -60,7 +62,6 @@ def main():
                           ON DELETE CASCADE
                           ON UPDATE CASCADE
                         );"""
-
 
     if conn is not None:
         create_table(conn, sql_create_biosample)
