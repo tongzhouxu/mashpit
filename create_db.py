@@ -15,7 +15,7 @@ def parse_args():
 def create_connection(db_file):
     conn = None
     try:
-        conn = sqlite3.connect(db_file,check_same_thread = False)
+        conn = sqlite3.connect(db_file, check_same_thread=False)
         return conn
     except Error as e:
         print(e)
@@ -63,9 +63,14 @@ def main():
                           ON UPDATE CASCADE
                         );"""
 
+    sql_create_sig = """CREATE TABLE IF NOT EXISTS SIG (
+                                  SRR           TEXT PRIMARY KEY,
+                                  Software          TEXT
+                                );"""
     if conn is not None:
         create_table(conn, sql_create_biosample)
         create_table(conn, sql_create_sra)
+        create_table(conn, sql_create_sig)
         conn.commit()
         conn.close()
     else:
