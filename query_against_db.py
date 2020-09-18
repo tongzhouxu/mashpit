@@ -12,9 +12,9 @@ from sourmash import SourmashSignature, save_signatures, load_one_signature, loa
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(usage='query_against_db.py -n <sample name> -database <database name>')
-    parser.add_argument("-n", help="<string>: sample file name")
-    parser.add_argument("-database", help="<string>: name of the database")
+    parser = argparse.ArgumentParser(usage='query_against_db.py <sample name> <database name> [--force, -f]')
+    parser.add_argument("sample_name", help="<string>: sample file name")
+    parser.add_argument("database", help="<string>: name of the database")
     parser.add_argument("-f", "--force", help="overwrite if query table exists", action="store_true")
     return parser.parse_args()
 
@@ -72,7 +72,7 @@ def main():
                               biosample_acc         TEXT PRIMARY KEY, 
                               jaccard_similarity    REAL
                       );"""
-    sql_create_output = ("""CREATE TABLE IF NOT EXISTS """ + sample_name + """_output (
+    sql_create_output = """CREATE TABLE IF NOT EXISTS """ + sample_name + """_output (
                                   biosample_acc    TEXT PRIMARY KEY, 
                                   taxid            INTEGER,
                                   strain           TEXT, 
@@ -86,7 +86,7 @@ def main():
                                   host_disease     TEXT,
                                   outbreak         TEXT,
                                   jaccard_similarity    REAL
-                          )""")
+                          );"""
 
     conn = create_connection(args.database + '.db')
 

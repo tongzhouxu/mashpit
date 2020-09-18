@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 
 import argparse
-import threading
 import xml.etree.ElementTree as ET
 from Bio import Entrez
 from create_db import create_connection
@@ -129,6 +128,8 @@ def metadata_sra_by_biosample_id(id, conn):
             info['host_disease'] = item.find('VALUE').text
         elif item.find('TAG').text == 'outbreak':
             info['outbreak'] = item.find('VALUE').text
+    ## TODO
+    ##  'Nonetype' object has no attribute 'text'
 
     handle_fetch_biosample = Entrez.efetch(db='biosample', id=id)
     xml_result_biosample = handle_fetch_biosample.read()
@@ -150,7 +151,6 @@ def metadata_sra_by_biosample_id(id, conn):
 
 
 def main():
-    lock = threading.Lock()
     args = parse_args()
     Entrez.email = args.email
     if args.key is not None:

@@ -6,7 +6,7 @@ import screed
 import sourmash
 import threading
 from create_db import create_connection
-from sourmash import SourmashSignature, save_signatures
+from sourmash import SourmashSignature, save_signatures, load_signatures
 
 
 def parse_args():
@@ -23,10 +23,13 @@ def signature(lk):
         os.system(
             "dump-ref-fasta http://sra-download.ncbi.nlm.nih.gov/srapub_files/" + SRR + "_" + SRR + ".realign > " +
             "database/" + SRR + "_skesa.fa")
-    except :
+    except:
         print("Can't download SKESA assembly for " + SRR)
     if os.stat("database/" + SRR + "_skesa.fa").st_size == 0:
         os.system("rm database/" + SRR + "_skesa.fa")
+        lk.acquire()
+        del to_be_sketched[0]
+        lk.release()
         return
     genome = "database/" + SRR + "_skesa.fa"
     minhashes = []
@@ -40,12 +43,8 @@ def signature(lk):
     os.system("rm database/" + SRR + "_skesa.fa")
     print("Signature created!")
     lk.acquire()
-    sketched_list.append(SRR)
     del to_be_sketched[0]
     lk.release()
-    print(threading.current_thread().getName(), sketched_list)
-
-
 
 
 def main():
@@ -70,23 +69,20 @@ def main():
     for row in cursor:
         total_srr.append(row[0])
 
+    if os.path.exists("database.sig"):
+        database_sig = load_signatures('database.sig')
+        for sig in database_sig:
+            sketched_list.append(sig.name())
     for i in total_srr:
-        c = conn.cursor()
-        c.execute("SELECT SRR,Software FROM SIG WHERE SRR=?", (i,))
-        if c.fetchone():
-            print("Sketched. Pass.")
-        else:
+        if i not in sketched_list:
             to_be_sketched.append(i)
 
     while len(to_be_sketched) >= 1:
         for i in range(6):
-            t = threading.Thread(target=signature,args=(lock,))
+            t = threading.Thread(target=signature, args=(lock,))
             t.start()
             t.join()
 
-    for i in sketched_list:
-        c = conn.cursor()
-        c.execute("INSERT INTO SIG (SRR,Software) VALUES ('" + i + "','sourmash')")
     conn.commit()
 
 
