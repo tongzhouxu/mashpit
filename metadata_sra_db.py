@@ -63,6 +63,7 @@ def metadata_sra_by_biosample_id(id, conn):
             handle_fetch_sra = Entrez.efetch(db='sra', id=record_link_sra[0]['LinkSetDb'][0]['Link'][0]['Id'])
         except IndexError:
             print("No SRA record for this BIOSAMPLE!" + id)
+## Error log 
             return
 
     # get the xml formatted sra result

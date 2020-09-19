@@ -59,7 +59,7 @@ def insert_distance(sample_name, conn, info):
 
 def main():
     args = parse_args()
-    sample_name = args.n
+    sample_name = args.sample_name
 
     if os.path.exists(args.database + '.db'):
         pass
@@ -113,7 +113,7 @@ def main():
                  biosample.geo_loc_name,
                  biosample.isolation_source,
                  biosample.lat_lon,
-                 biosample.genotype,
+                 biosample.serovar,
                  biosample.host,
                  biosample.host_disease,
                  biosample.outbreak,
