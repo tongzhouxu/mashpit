@@ -5,68 +5,75 @@ Create a database of mash signatures and find the most similar genomes to a targ
 
 #### Create the database
 ```
-usage: create_db.py -database <database name>
+usage: create_db.py <database name>
+
+positional arguments:
+  database    <string>: name of the database
 
 optional arguments:
-  -h, --help          show this help message and exit
-  -database DATABASE  <string>: name of the database
+  -h, --help  show this help message and exit
 ```
 - Example command
 ```
-create_db.py -database reading
+create_db.py database reading
 ```
 #### Collect the metadata
 ```
-usage: metadata_sra_db.py -database <database name> -method <method> -list <accession list> (-term <keyword>) -email <Entrez email address> -key <Entrez API key>
+usage: metadata_sra_db.py <database name> <method> <Entrez email address> [-key <Entrez API key>] [-list <accession list>] [-term <keyword>]
+
+positional arguments:
+  database              <string>: name of the database
+  method                <string>: data collecting method. Available options:
+                        bioproject_list, biosample_list, keyword
+  email                 <string>: Entrez email address
 
 optional arguments:
-  -h, --help          show this help message and exit
-  -database DATABASE  <string>: name of the database
-  -method METHOD      <int>: data collecting method. 0: bioproject list, 1:
-                      biosample list, 2: name
-  -list LIST          <string>: full name of the list file
-  -email EMAIL        <string>: entrez email address
-  -key KEY            <string>: entrez api key
-  -term TERM          <string>: specie/serovar name when using keyword to
-                      collect data
+  -h, --help            show this help message and exit
+  -k KEY, --key KEY     <string>: Entrez api key
+  -l LIST, --list LIST  <string>: list file of bioproject or biosample
+  -t TERM, --term TERM  <string>: query keyword
 ```
 More information about Entrez API key can be found on [this page.](https://ncbiinsights.ncbi.nlm.nih.gov/2017/11/02/new-api-keys-for-the-e-utilities/)
 - Example command
   - Using BioProject list
   ```
-  metadata_sra_db.py -database database_name -method 0 -email your_email -key your_key -list project_list.txt
+  metadata_sra_db.py database database_name method bioproject_list email your_ncbi_email --key your_key --list project_list.txt
   ```
   - Using BioSample list
   ```
-  metadata_sra_db.py -database database_name -method 1 -list biosample_list.txt -email your_email -key your_key
+  metadata_sra_db.py database database_name method biosample_list  email your_ncbi_email --key your_key --list biosample_list.txt
   ```
   - Using keyword
   ```
-  metadata_sra_db.py -database database_name -method 2 -email your_email -key your_key -term salmonella_reading
+  metadata_sra_db.py database database_name method keyword email your_ncbi_email --key your_key --term salmonella_reading
   ```
 
 #### Get the assembly and the signature file for all the entries in the database
 ```
-usage: sketch_db.py -database <database name>
+usage: sketch_db.py <database name>
+
+positional arguments:
+  database    <string>: name of the database
 
 optional arguments:
-  -h, --help          show this help message and exit
-  -database DATABASE  <string>: name of the database
+  -h, --help  show this help message and exit
 ```
 
 #### Query in the database
 ```
-usage: query_against_db.py -n <sample name> -database <database name>
+usage: query_against_db.py <sample name> <database name> [--force, -f]
+
+positional arguments:
+  sample_name  <string>: sample file name
+  database     <string>: name of the database
 
 optional arguments:
-  -h, --help          show this help message and exit
-  -n N                <string>: sample file name
-  -database DATABASE  <string>: name of the database
-  -f, --force         overwrite if query table exists
+  -h, --help   show this help message and exit
+  -f, --force  overwrite if query table exists
 ```
 - Example command
   ```
-  query_against_db.py -n test_sample -database reading
+  query_against_db.py sample_name test_sample database reading
   ```
 
 ## Dependencies
@@ -121,24 +128,22 @@ Please make sure the **dump-ref-fasta** command in sratools is added to PATH bef
   ```
   And then run:
   ```
-  create_db.py -database bareilly
+  create_db.py database bareilly
   ```
   In this command, bareilly is the name for the database. This command should generate a file named **bareilly.db**
 
 #### 3. Build up the metadata database by searching for all the information in NCBI using keyword salmonella bareilly
 
   ```
-  metadata_sra_db.py -database bareilly -method 2 -email your_ncbi_account_email -key your_ncbi_api_key -term salmonella_bareilly
+  metadata_sra_db.py database bareilly method keyword email your_ncbi_account_email --key your_ncbi_api_key --term salmonella_bareilly
   ```
-  
-  In this command, "-method 2" indicates we search for the information using a keyword. 
 
-  While running this command, you will see all the metadata fetched printing out on the screen. If there is no SRA record for a biosample, the entry will be skipped and you will see "No SRA record, skipping it."
+  While running this command, you will see all the metadata fetched printing out on the screen. If there is no SRA record for a biosample, the entry will be skipped and you will see "No SRA record."
   
  #### 4. Get the SKESA assembly and sourmash signature file
  
   ```
-  sketch_db.py -database bareilly
+  sketch_db.py database bareilly
   ```
 
   This command should create a folder named "database" in the current path, and the assembly downloaded will be stored in this folder. A signatrue file named "database.sig" should also be generated in which there are sourmash signatures for each assembly in the database folder.
@@ -148,7 +153,7 @@ Please make sure the **dump-ref-fasta** command in sratools is added to PATH bef
  #### 5. Get the most similar genome in the database for a target sample.
  
    ```
-   query_against_db.py -n test_sample_name -database bareilly
+   query_against_db.py sample_name test_sample_name database bareilly
    ```
    
    In this command, test_sample_name should be the full name of the target sample. The target sample should be a genome assembly and exist in the current path.
