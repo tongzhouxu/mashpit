@@ -96,7 +96,7 @@ def main():
     conn.commit()
     get_target_sig(sample_name)
 
-    database_sig = load_signatures('database.sig')
+    database_sig = load_signatures(args.database + '.sig')
     target_sig = load_one_signature(sample_name + '.sig')
     c = conn.cursor()
     for sig in database_sig:

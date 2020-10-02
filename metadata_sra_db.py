@@ -8,7 +8,7 @@ from create_db import create_connection
 
 def parse_args():
     parser = argparse.ArgumentParser(usage='metadata_sra_db.py <database name> <method> <Entrez email address> '
-                                           '[-key <Entrez API key>] [-list <accession list>] [-term <keyword>] ')
+                                           '[--key <Entrez API key>] [--list <accession list>] [--term <keyword>] ')
     parser.add_argument("database", help="<string>: name of the database")
     parser.add_argument("method", help="<string>: data collecting method. Available options: bioproject_list, "
                                        "biosample_list, keyword")
