@@ -102,33 +102,38 @@ def metadata_sra_by_biosample_id(id, conn):
     info_sra['srr'] = srr.attrib['accession']
 
     attributes = root_sra.find('EXPERIMENT_PACKAGE').find('SAMPLE').find('SAMPLE_ATTRIBUTES')
-    for item in attributes:
-        if item.find('TAG').text == 'strain':
-            info['strain'] = item.find('VALUE').text
-        elif item.find('TAG').text == 'collected_by':
-            info['collected_by'] = item.find('VALUE').text
-        elif item.find('TAG').text == 'collection_date':
-            info['collection_date'] = item.find('VALUE').text
-        elif item.find('TAG').text == 'geo_loc_name':
-            info['geo_loc_name'] = item.find('VALUE').text
-        elif item.find('TAG').text == 'isolation_source':
-            info['isolation_source'] = item.find('VALUE').text
-        elif item.find('TAG').text == 'lat_lon':
-            info['lat_lon'] = item.find('VALUE').text
-        elif item.find('TAG').text == 'serovar':
-            info['serovar'] = item.find('VALUE').text
-        elif item.find('TAG').text == 'serovar':
-            info['sub_species'] = item.find('VALUE').text
-        elif item.find('TAG').text == 'serovar':
-            info['Species'] = item.find('VALUE').text
-        elif item.find('TAG').text == 'serovar':
-            info['Genus'] = item.find('VALUE').text
-        elif item.find('TAG').text == 'host':
-            info['host'] = item.find('VALUE').text
-        elif item.find('TAG').text == 'host_disease':
-            info['host_disease'] = item.find('VALUE').text
-        elif item.find('TAG').text == 'outbreak':
-            info['outbreak'] = item.find('VALUE').text
+    try:
+        for item in attributes:
+            if item.find('TAG').text == 'strain':
+                info['strain'] = item.find('VALUE').text
+            elif item.find('TAG').text == 'collected_by':
+                info['collected_by'] = item.find('VALUE').text
+            elif item.find('TAG').text == 'collection_date':
+                info['collection_date'] = item.find('VALUE').text
+            elif item.find('TAG').text == 'geo_loc_name':
+                info['geo_loc_name'] = item.find('VALUE').text
+            elif item.find('TAG').text == 'isolation_source':
+                info['isolation_source'] = item.find('VALUE').text
+            elif item.find('TAG').text == 'lat_lon':
+                info['lat_lon'] = item.find('VALUE').text
+            elif item.find('TAG').text == 'serovar':
+                info['serovar'] = item.find('VALUE').text
+            elif item.find('TAG').text == 'serovar':
+                info['sub_species'] = item.find('VALUE').text
+            elif item.find('TAG').text == 'serovar':
+                info['Species'] = item.find('VALUE').text
+            elif item.find('TAG').text == 'serovar':
+                info['Genus'] = item.find('VALUE').text
+            elif item.find('TAG').text == 'host':
+                info['host'] = item.find('VALUE').text
+            elif item.find('TAG').text == 'host_disease':
+                info['host_disease'] = item.find('VALUE').text
+            elif item.find('TAG').text == 'outbreak':
+                info['outbreak'] = item.find('VALUE').text
+    except AttributeError:
+        print("Error! No metadata information.")
+        return
+
     ## TODO
     ##  'Nonetype' object has no attribute 'text'
 
