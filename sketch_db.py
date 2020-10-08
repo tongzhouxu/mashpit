@@ -6,6 +6,8 @@ import screed
 import sourmash
 import threading
 import pickle
+import glob
+import subprocess
 from create_db import create_connection
 from sourmash import SourmashSignature, save_signatures, load_signatures
 
@@ -16,46 +18,59 @@ def parse_args():
     return parser.parse_args()
 
 
-def signature(lk,database):
+def signature(lk, database):
     global sketched_list
     global to_be_sketched
-    if len(to_be_sketched) >= 1:
-        SRR = to_be_sketched[0]
-    else:
+    global assembly_num
+    if len(to_be_sketched) == 0:
         exit(0)
+    SRR = to_be_sketched[0]
     try:
-        os.system(
+        subprocess.check_call(
             "dump-ref-fasta http://sra-download.ncbi.nlm.nih.gov/srapub_files/" + SRR + "_" + SRR + ".realign > " +
-            "tmp/" + SRR + "_skesa.fa")
-    except:
-        print("Can't download SKESA assembly for " + SRR)
+            "tmp/" + SRR + "_skesa.fa", shell=True, stderr=subprocess.DEVNULL)
+    except subprocess.CalledProcessError:
+        print("No SKESA assembly for " + SRR)
+        f = open("srr_no_assembly", 'a')
+        f.write(SRR+'\n')
+        f.close()
+
     if os.stat("tmp/" + SRR + "_skesa.fa").st_size == 0:
         os.system("rm tmp/" + SRR + "_skesa.fa")
         lk.acquire()
         del to_be_sketched[0]
         lk.release()
         return
-    genome = "tmp/" + SRR + "_skesa.fa"
-    minhashes = []
-    mh = sourmash.MinHash(n=1000, ksize=21)
-    for record in screed.open(genome):
-        mh.add_sequence(record.sequence, True)
-    minhashes.append(mh)
-    lk.acquire()
-    if os.path.exists(database + '.pickle'):
-        with open(database + '.pickle', 'rb') as sig_pickle:
-            siglist = pickle.load(sig_pickle)
     else:
-        siglist = []
-    siglist.append(SourmashSignature(minhashes[0], name=SRR))
-    with open(database + '.sig', 'wt') as sig_new:
-        save_signatures(siglist, sig_new)
-    with open(database + '.pickle', 'wb') as sig_pickle:
-        pickle.dump(siglist, sig_pickle)
-    os.system("rm tmp/" + SRR + "_skesa.fa")
-    print("Signature created!")
-    del to_be_sketched[0]
-    lk.release()
+        lk.acquire()
+        assembly_num = assembly_num + 1
+        print("Assembly downloaded for "+SRR)
+        del to_be_sketched[0]
+        lk.release()
+
+    if len(to_be_sketched) == 0 or assembly_num >= 100:
+        genomes = glob.glob('tmp/*_skesa.fa')
+        minhashes = []
+        for g in genomes:
+            mh = sourmash.MinHash(n=1000, ksize=21)
+            for record in screed.open(g):
+                mh.add_sequence(record.sequence, True)
+            minhashes.append(mh)
+        lk.acquire()
+        if os.path.exists(database + '.pickle'):
+            with open(database + '.pickle', 'rb') as sig_pickle:
+                siglist = pickle.load(sig_pickle)
+        else:
+            siglist = []
+        for i in range(len(minhashes)):
+            siglist.append(SourmashSignature(minhashes[i], name=genomes[i].strip('tmp/').strip('_skesa.fa')))
+        with open(database + '.sig', 'wt') as sig_new:
+            save_signatures(siglist, sig_new)
+        with open(database + '.pickle', 'wb') as sig_pickle:
+            pickle.dump(siglist, sig_pickle)
+        os.system("rm tmp/*")
+        assembly_num = 0
+        lk.release()
 
 
 def main():
@@ -66,7 +81,7 @@ def main():
     else:
         print("Database does not exist. Please make sure the name is correct or run create_db.py and "
               "metadata_sra_db.py first")
-        exit()
+        exit(0)
 
     conn = create_connection(args.database + '.db')
 
@@ -84,13 +99,24 @@ def main():
         database_sig = load_signatures(args.database + ".sig")
         for sig in database_sig:
             sketched_list.append(sig.name())
+
+    if os.path.exists("srr_no_assembly"):
+        f = open("srr_no_assembly", 'r')
+        srr_list = f.readlines()
+        for srr in srr_list:
+            error_sra_list.append(srr.strip('\n'))
+        f.close()
+
+    else:
+        os.system("touch srr_no_assembly")
+
     for i in total_srr:
-        if i not in sketched_list:
+        if (i not in sketched_list) and (i not in error_sra_list):
             to_be_sketched.append(i)
 
     while len(to_be_sketched) >= 1:
         for i in range(6):
-            t = threading.Thread(target=signature, args=(lock,args.database,))
+            t = threading.Thread(target=signature, args=(lock, args.database,))
             t.start()
             t.join()
 
@@ -101,5 +127,7 @@ if __name__ == '__main__':
     total_srr = []
     to_be_sketched = []
     sketched_list = []
+    error_sra_list = []
+    assembly_num = 0
     lock = threading.Lock()
     main()
