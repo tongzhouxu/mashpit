@@ -1,3 +1,4 @@
+[![Build Status](https://travis-ci.org/tongzhouxu/mashpit.svg?branch=master)](https://travis-ci.org/tongzhouxu/mashpit)
 # Mashpit
 Create a database of mash signatures and find the most similar genomes to a target sample 
 
