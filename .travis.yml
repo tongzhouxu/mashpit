@@ -1,0 +1,8 @@
+language: python
+python:
+  - "3.7"
+install:
+  - pip install biopython
+  - pip install pandas
+  - pip install sourmash
+script: python test_create_db.py 
