@@ -2,10 +2,11 @@ language: python
 python:
   - "3.7"
   - "3.8"
+before_install:
+  - python setup.py install
 install:
   - pip install biopython
   - pip install pandas
   - pip install sourmash
 script:
-  - python setup.py install
   - python tests/test_create_db.py
