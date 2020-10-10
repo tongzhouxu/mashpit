@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 from unittest.mock import MagicMock, Mock
-from create_db import create_connection
+from scripts.create_db import create_connection
 import unittest
 import sqlite3
 
