@@ -6,4 +6,4 @@ install:
   - pip install biopython
   - pip install pandas
   - pip install sourmash
-script: python test_create_db.py 
+script: python tests/xtest_create_db.py 
