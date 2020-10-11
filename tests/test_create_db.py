@@ -28,6 +28,8 @@ class MyTests(unittest.TestCase):
         c = conn.cursor()
         c.execute(''' SELECT count(name) FROM sqlite_master WHERE type='table' AND name='BIOSAMPLE' ''')
         self.assertIsNot(c.fetchone()[0], 0)
+        c.execute(''' SELECT count(name) FROM sqlite_master WHERE type='table' AND name='SRA' ''')
+        self.assertIsNot(c.fetchone()[0], 0)
         self.assertIn(b'usage: create_db.py <database name>\n\npositional arguments:\n  database    <string>: name of '
                       b'the database\n\noptional arguments:\n  -h, --help  show this help message and exit\n',
                       result_help.stdout)
