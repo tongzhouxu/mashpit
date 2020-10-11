@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
+import os
 import xml.etree.ElementTree as ET
 from Bio import Entrez
 from scripts.create_db import create_connection
@@ -10,11 +11,10 @@ def parse_args():
     parser = argparse.ArgumentParser(usage='metadata_sra_db.py <database name> <method> <Entrez email address> '
                                            '[--key <Entrez API key>] [--list <accession list>] [--term <keyword>] ')
     parser.add_argument("database", help="<string>: name of the database")
-    parser.add_argument("method", help="<string>: data collecting method. Available options: bioproject_list, "
-                                       "biosample_list, keyword")
+    parser.add_argument("method", choices=["bioproject_list", "biosample_list", "keyword"], help= "<string>: data collecting method. Available options: bioproject_list, biosample_list, keyword")
     parser.add_argument("email", help="<string>: Entrez email address")
     parser.add_argument("-k", "--key", help="<string>: Entrez api key")
-    parser.add_argument("-l", "--list", help="<string>: list file of bioproject or biosample")
+    parser.add_argument("-l", "--list", help="<string>: list file name of bioproject or biosample")
     parser.add_argument("-t", "--term", help="<string>: query keyword")
     return parser.parse_args()
 
@@ -59,12 +59,11 @@ def metadata_sra_by_biosample_id(id, conn):
     try:
         handle_fetch_sra = Entrez.efetch(db='sra', id=record_link_sra[0]['LinkSetDb'][0]['Link'][0]['Id'])
     except IndexError:
-        try:
-            handle_fetch_sra = Entrez.efetch(db='sra', id=record_link_sra[0]['LinkSetDb'][0]['Link'][0]['Id'])
-        except IndexError:
-            print("No SRA record for this BIOSAMPLE!" + id)
-## Error log 
-            return
+        print("No SRA record for this BIOSAMPLE! Entrez id: " + id)
+        f = open("biosample_error_id", 'a')
+        f.write(id + '\n')
+        f.close()
+        return
 
     # get the xml formatted sra result
     xml_result_sra = handle_fetch_sra.read()
@@ -134,9 +133,6 @@ def metadata_sra_by_biosample_id(id, conn):
         print("Error! No metadata information.")
         return
 
-    ## TODO
-    ##  'Nonetype' object has no attribute 'text'
-
     handle_fetch_biosample = Entrez.efetch(db='biosample', id=id)
     xml_result_biosample = handle_fetch_biosample.read()
     root_biosample = ET.fromstring(xml_result_biosample)
@@ -161,6 +157,8 @@ def main():
     Entrez.email = args.email
     if args.key is not None:
         Entrez.api_key = args.key
+    if not os.path.exists("biosample_error_id"):
+        os.system("touch biosample_error_id")
     conn = create_connection(args.database + '.db')
     # check for the existence of the database tables
     c = conn.cursor()
@@ -205,8 +203,6 @@ def main():
         for id in id_list:
             metadata_sra_by_biosample_id(id, conn)
         conn.commit()
-    else:
-        print("Unrecognized method parameter. Check out all the options by typing metadata_sra_db.py -h")
 
 
 if __name__ == '__main__':

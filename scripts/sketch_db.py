@@ -106,7 +106,6 @@ def main():
         for srr in srr_list:
             error_sra_list.append(srr.strip('\n'))
         f.close()
-
     else:
         os.system("touch srr_no_assembly")
 
