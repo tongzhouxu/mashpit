@@ -38,15 +38,15 @@ More information about Entrez API key can be found on [this page.](https://ncbii
 - Example command
   - Using BioProject list
   ```
-  metadata_sra_db.py database database_name method bioproject_list email your_ncbi_email --key your_key --list project_list.txt
+  metadata_sra_db.py database_name bioproject_list your_ncbi_email --key your_key --list project_list.txt
   ```
   - Using BioSample list
   ```
-  metadata_sra_db.py database database_name method biosample_list  email your_ncbi_email --key your_key --list biosample_list.txt
+  metadata_sra_db.py database_name biosample_list your_ncbi_email --key your_key --list biosample_list.txt
   ```
   - Using keyword
   ```
-  metadata_sra_db.py database database_name method keyword email your_ncbi_email --key your_key --term salmonella_reading
+  metadata_sra_db.py database_name keyword your_ncbi_email --key your_key --term salmonella_reading
   ```
 
 #### Get the assembly and the signature file for all the entries in the database
@@ -74,7 +74,7 @@ optional arguments:
 ```
 - Example command
   ```
-  query_against_db.py sample_name test_sample database reading
+  query_against_db.py sample_name reading
   ```
 
 ## Dependencies
@@ -117,7 +117,7 @@ Please make sure the **dump-ref-fasta** command in sratools is added to PATH bef
   ```
   python files in mashpit can be added to PATH using command:
   ```
-  export PATH=/path-to-mashpit:$PATH
+  export PATH=/path-to-mashpit/scripts:$PATH
   ```
 
 #### 2. Start by creating an empty sqlite database
@@ -129,32 +129,30 @@ Please make sure the **dump-ref-fasta** command in sratools is added to PATH bef
   ```
   And then run:
   ```
-  create_db.py database bareilly
+  create_db.py bareilly
   ```
   In this command, bareilly is the name for the database. This command should generate a file named **bareilly.db**
 
 #### 3. Build up the metadata database by searching for all the information in NCBI using keyword salmonella bareilly
 
   ```
-  metadata_sra_db.py database bareilly method keyword email your_ncbi_account_email --key your_ncbi_api_key --term salmonella_bareilly
+  metadata_sra_db.py bareilly keyword your_ncbi_account_email --key your_ncbi_api_key --term salmonella_bareilly
   ```
-
-  While running this command, you will see all the metadata fetched printing out on the screen. If there is no SRA record for a biosample, the entry will be skipped and you will see "No SRA record."
   
  #### 4. Get the SKESA assembly and sourmash signature file
  
   ```
-  sketch_db.py database bareilly
+  sketch_db.py bareilly
   ```
 
-  This command should create a folder named "database" in the current path, and the assembly downloaded will be stored in this folder. A signatrue file named "database.sig" should also be generated in which there are sourmash signatures for each assembly in the database folder.
+  This command should create a folder named "tmp" in the current path, and the assembly downloaded will be stored in this folder during the sketching process. A signatrue file named "bareilly.sig" should also be generated in which there are sourmash signatures for each assembly in the database folder.
  
-  While running this command, you will see "Downloaded assembly for SRR_accession" if successful. If the skesa assembly does not exist or there is anything wrong, you will see "Can't download SKESA assembly for SRR_accession" printing out.
+  While running this command, you will see "Assembly downloaded for SRR_accession" if successful. If the skesa assembly does not exist or there is anything wrong, you will see "No assembly for SRR_accession" printing out.
   
  #### 5. Get the most similar genome in the database for a target sample.
  
    ```
-   query_against_db.py sample_name test_sample_name database bareilly
+   query_against_db.py test_sample_name bareilly
    ```
    
    In this command, test_sample_name should be the full name of the target sample. The target sample should be a genome assembly and exist in the current path.
