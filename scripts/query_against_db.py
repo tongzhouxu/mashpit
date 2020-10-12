@@ -3,6 +3,7 @@
 import argparse
 import csv
 import os
+import ntpath
 import pandas as pd
 from scripts.create_db import create_connection
 from scripts.create_db import create_table
@@ -13,7 +14,7 @@ from sourmash import SourmashSignature, save_signatures, load_one_signature, loa
 
 def parse_args():
     parser = argparse.ArgumentParser(usage='query_against_db.py <sample name> <database name> [--force, -f]')
-    parser.add_argument("sample_name", help="<string>: sample file name")
+    parser.add_argument("sample", help="<string>: path to the sample file")
     parser.add_argument("database", help="<string>: name of the database")
     parser.add_argument("-f", "--force", help="overwrite if query table exists", action="store_true")
     return parser.parse_args()
@@ -59,7 +60,8 @@ def insert_distance(sample_name, conn, info):
 
 def main():
     args = parse_args()
-    sample_name = args.sample_name
+    sample_path = args.sample
+    sample_name = ntpath.basename(sample_path)
 
     if os.path.exists(args.database + '.db'):
         pass
@@ -94,10 +96,10 @@ def main():
     create_table(conn, sql_create_distance)
     create_table(conn, sql_create_output)
     conn.commit()
-    get_target_sig(sample_name)
+    get_target_sig(sample_path)
 
     database_sig = load_signatures(args.database + '.sig')
-    target_sig = load_one_signature(sample_name + '.sig')
+    target_sig = load_one_signature(sample_path + '.sig')
     c = conn.cursor()
     for sig in database_sig:
         biosample_acc = select_by_srr(conn,sig.name())

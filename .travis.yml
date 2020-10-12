@@ -3,6 +3,7 @@ python:
   - "3.7"
   - "3.8"
 before_install:
+  - sudo apt-get install -y sra-toolkit
   - pip install -U pip
   - python setup.py install
 install:
@@ -10,3 +11,4 @@ install:
 script:
   - python tests/test_create_db.py
   - python tests/test_metadata_sra_db.py
+  - python tests/test_sketch_db.py
