@@ -5,7 +5,7 @@ python:
 before_install:
   - wget http://ftp-trace.ncbi.nlm.nih.gov/sra/sdk/current/sratoolkit.current-centos_linux64.tar.gz -O /tmp/sratoolkit.tar.gz
   - tar -xvf /tmp/sratoolkit.tar.gz
-  - export PATH=$PATH:$PWD/sratoolkit/bin
+  - export PATH=$PATH:$PWD/sratoolkit.2.10.8-centos_linux64/bin
   - pip install -U pip
   - python setup.py install
 install:
