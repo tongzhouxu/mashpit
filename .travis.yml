@@ -3,7 +3,9 @@ python:
   - "3.7"
   - "3.8"
 before_install:
-  - sudo apt-get install -y sra-toolkit
+  - wget "http://ftp-trace.ncbi.nlm.nih.gov/sra/sdk/current/sratoolkit.current-centos_linux64.tar.gz"
+  - tar -xzf sratoolkit.current-centos_linux64.tar.gz
+  - export PATH=$HOME/sratoolkit.current-centos_linux64/bin:$PATH
   - pip install -U pip
   - python setup.py install
 install:
@@ -12,3 +14,4 @@ script:
   - python tests/test_create_db.py
   - python tests/test_metadata_sra_db.py
   - python tests/test_sketch_db.py
+  - python tests/test_query_against_db.py
