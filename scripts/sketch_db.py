@@ -8,7 +8,7 @@ import threading
 import pickle
 import glob
 import subprocess
-from create_db import create_connection
+from scripts.create_db import create_connection
 from sourmash import SourmashSignature, save_signatures, load_signatures
 
 
@@ -18,6 +18,7 @@ def parse_args():
     return parser.parse_args()
 
 
+# method to download assemblies and get signature files
 def signature(lk, database):
     global sketched_list
     global to_be_sketched
@@ -32,7 +33,7 @@ def signature(lk, database):
     except subprocess.CalledProcessError:
         print("No SKESA assembly for " + SRR)
         f = open("srr_no_assembly", 'a')
-        f.write(SRR+'\n')
+        f.write(SRR + '\n')
         f.close()
 
     if os.stat("tmp/" + SRR + "_skesa.fa").st_size == 0:
@@ -44,7 +45,7 @@ def signature(lk, database):
     else:
         lk.acquire()
         assembly_num = assembly_num + 1
-        print("Assembly downloaded for "+SRR)
+        print("Assembly downloaded for " + SRR)
         del to_be_sketched[0]
         lk.release()
 
@@ -114,7 +115,7 @@ def main():
             to_be_sketched.append(i)
 
     while len(to_be_sketched) >= 1:
-        for i in range(6):
+        for i in range(24):
             t = threading.Thread(target=signature, args=(lock, args.database,))
             t.start()
             t.join()
