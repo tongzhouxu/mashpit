@@ -5,8 +5,8 @@ import csv
 import os
 import ntpath
 import pandas as pd
-from scripts.create_db import create_connection
-from scripts.create_db import create_table
+from create_db import create_connection
+from create_db import create_table
 import screed
 import sourmash
 from sourmash import SourmashSignature, save_signatures, load_one_signature, load_signatures

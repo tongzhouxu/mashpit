@@ -4,7 +4,7 @@ import argparse
 import os
 import xml.etree.ElementTree as ET
 from Bio import Entrez
-from scripts.create_db import create_connection
+from create_db import create_connection
 
 
 def parse_args():

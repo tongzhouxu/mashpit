@@ -8,7 +8,7 @@ import threading
 import pickle
 import glob
 import subprocess
-from scripts.create_db import create_connection
+from create_db import create_connection
 from sourmash import SourmashSignature, save_signatures, load_signatures
 
 
