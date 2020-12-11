@@ -13,6 +13,7 @@ setup(
         'scripts/sketch_db.py',
     ],
     install_requires=[
+        'cPython>=0.0.6',
         'screed>=1.0.4',
         'sourmash>=3.3.1',
         'pandas>=1.0.3',
