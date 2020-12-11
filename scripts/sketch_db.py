@@ -141,7 +141,7 @@ def main():
 
     while len(to_be_sketched) >= 1:
         for i in range(6):
-            t = threading.Thread(target=signature, args=(lock, args.database,))
+            t = threading.Thread(target=signature, args=(lock, args.database,assembly_num,))
             t.start()
             t.join()
 
