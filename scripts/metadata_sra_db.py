@@ -60,6 +60,7 @@ def metadata_sra_by_biosample_id(id, conn):
         handle_fetch_sra = Entrez.efetch(db='sra', id=record_link_sra[0]['LinkSetDb'][0]['Link'][0]['Id'])
     except IndexError:
         print("No SRA record for this BIOSAMPLE! Entrez id: " + id)
+        # keep a record of the biosample ids that failed to get metadata
         f = open("biosample_error_id", 'a')
         f.write(id + '\n')
         f.close()
@@ -68,6 +69,7 @@ def metadata_sra_by_biosample_id(id, conn):
     # get the xml formatted sra result
     xml_result_sra = handle_fetch_sra.read()
     root_sra = ET.fromstring(xml_result_sra)
+    # check the sequencing library layout and source
     lib_layout = root_sra.find('EXPERIMENT_PACKAGE').find('EXPERIMENT').find('DESIGN').find('LIBRARY_DESCRIPTOR').find(
         'LIBRARY_LAYOUT')[0].tag
     lib_source = root_sra.find('EXPERIMENT_PACKAGE').find('EXPERIMENT').find('DESIGN').find('LIBRARY_DESCRIPTOR').find(
@@ -157,15 +159,26 @@ def main():
     Entrez.email = args.email
     if args.key is not None:
         Entrez.api_key = args.key
+    
     if not os.path.exists("biosample_error_id"):
         os.system("touch biosample_error_id")
-    conn = create_connection(args.database + '.db')
-    # check for the existence of the database tables
+    cwd = os.getcwd()
+    db_path = os.path.join(cwd, args.database + '.db')
+
+    # check for the existence of the database and tables
+    if os.path.exists(db_path):
+        pass
+    else:
+        print("Database does not exist. Please make sure the name is correct or run create_db.py and "
+              "metadata_sra_db.py first")
+        exit(0)
+    conn = create_connection(db_path)
     c = conn.cursor()
     c.execute(''' SELECT count(name) FROM sqlite_master WHERE type='table' AND name='BIOSAMPLE' ''')
     if c.fetchone()[0] == 0:
         print("No BIOSAMPLE table found in the database. Run create_db.py to create the tables first")
         exit(0)
+    
     # start searching on NCBI according to the selected method
     if args.method == "bioproject_list":
         f = open(args.list, 'r')

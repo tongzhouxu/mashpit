@@ -5,6 +5,7 @@ Create a database of mash signatures and find the most similar genomes to a targ
 ## Usage
 
 #### Create the database
+Create an empty sqlite db file in the current working directory.
 ```
 usage: create_db.py <database name>
 
@@ -16,7 +17,7 @@ optional arguments:
 ```
 - Example command
 ```
-create_db.py database reading
+create_db.py reading
 ```
 #### Collect the metadata
 ```
@@ -79,7 +80,7 @@ optional arguments:
 
 ## Dependencies
 
-- Python 3.7
+- Python >= 3.6
 - Python packages:
   - Biopython
   - Pandas
@@ -115,9 +116,9 @@ Please make sure the **dump-ref-fasta** command in sratools is added to PATH bef
   ```
   git clone https://github.com/tongzhouxu/mashpit.git
   ```
-  python files in mashpit can be added to PATH using command:
+  Install mashpit:
   ```
-  export PATH=/path-to-mashpit/scripts:$PATH
+  python setup.py install
   ```
 
 #### 2. Start by creating an empty sqlite database

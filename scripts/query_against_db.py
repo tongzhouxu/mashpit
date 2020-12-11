@@ -63,12 +63,25 @@ def main():
     sample_path = args.sample
     sample_name = ntpath.basename(sample_path)
 
-    if os.path.exists(args.database + '.db'):
+    cwd = os.getcwd()
+    db_path = os.path.join(cwd, args.database + '.db')
+    database_sig_path = os.path.join(cwd, args.database + '.sig')
+    target_sig_path = os.path.join(cwd, sample_path + '.sig')
+
+    # check for the existence of the database and tables
+    if os.path.exists(db_path):
         pass
     else:
         print("Database does not exist. Please make sure the name is correct or run create_db.py and "
               "metadata_sra_db.py first")
-        exit()
+        exit(0)
+    conn = create_connection(db_path)
+    c = conn.cursor()
+    c.execute(''' SELECT count(name) FROM sqlite_master WHERE type='table' AND name='BIOSAMPLE' ''')
+    if c.fetchone()[0] == 0:
+        print("No BIOSAMPLE table found in the database. Please make sure the name is correct or run create_db.py and "
+              "metadata_sra_db.py first")
+        exit(0)
 
     sql_create_distance = """CREATE TABLE IF NOT EXISTS """ + sample_name + """_distance (
                               biosample_acc         TEXT PRIMARY KEY, 
@@ -90,16 +103,14 @@ def main():
                                   jaccard_similarity    REAL
                           );"""
 
-    conn = create_connection(args.database + '.db')
-
     check_output_existence(conn, args, sample_name)
     create_table(conn, sql_create_distance)
     create_table(conn, sql_create_output)
     conn.commit()
     get_target_sig(sample_path)
 
-    database_sig = load_signatures(args.database + '.sig')
-    target_sig = load_one_signature(sample_path + '.sig')
+    database_sig = load_signatures(database_sig_path)
+    target_sig = load_one_signature(target_sig_path)
     c = conn.cursor()
     for sig in database_sig:
         biosample_acc = select_by_srr(conn,sig.name())

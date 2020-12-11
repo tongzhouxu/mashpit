@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import os
 import argparse
 import sqlite3
 from sqlite3 import Error
@@ -34,7 +35,10 @@ def create_table(conn, create_table_sql):
 
 def main():
     args = parse_args()
-    conn = create_connection(args.database + '.db')
+
+    cwd = os.getcwd()
+    db_path = os.path.join(cwd, args.database + '.db')
+    conn = create_connection(db_path)
 
     # define and create the tables in the database
     sql_create_biosample = """CREATE TABLE IF NOT EXISTS BIOSAMPLE (
@@ -63,14 +67,9 @@ def main():
                           ON UPDATE CASCADE
                         );"""
 
-    sql_create_sig = """CREATE TABLE IF NOT EXISTS SIG (
-                                  SRR           TEXT PRIMARY KEY,
-                                  Software          TEXT
-                                );"""
     if conn is not None:
         create_table(conn, sql_create_biosample)
         create_table(conn, sql_create_sra)
-        create_table(conn, sql_create_sig)
         conn.commit()
         conn.close()
     else:
