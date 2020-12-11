@@ -13,12 +13,9 @@ setup(
         'scripts/sketch_db.py',
     ],
     install_requires=[
-        'cython>=0.29.21',
         'screed>=1.0.4',
         'sourmash>=3.3.1',
-        'pandas>=1.0.3',
         'setuptools>=47.1.1',
         'biopython>=1.76',
-        'numpy>=1.16.5',
     ],
 )
