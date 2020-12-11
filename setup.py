@@ -18,5 +18,6 @@ setup(
         'pandas>=1.0.3',
         'setuptools>=47.1.1',
         'biopython>=1.76',
+        'numpy>=1.16.5',
     ],
 )
