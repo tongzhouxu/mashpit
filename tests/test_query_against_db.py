@@ -3,6 +3,8 @@
 import unittest
 import subprocess
 from scripts.create_db import create_connection
+from subprocess import PIPE
+import sys
 
 
 class MyTests(unittest.TestCase):
@@ -14,7 +16,10 @@ class MyTests(unittest.TestCase):
         self.assertEqual(c.fetchone()[0], 3)
 
     def test_script_failure(self):
-        result_no_args = subprocess.run(['query_against_db.py'], capture_output=True)
+        if sys.version_info[0] <= 3.7:
+            result_no_args = subprocess.run(['query_against_db.py'], stdout=PIPE, stderr=PIPE)
+        else:
+            result_no_args = subprocess.run(['query_against_db.py'], capture_output=True)
         self.assertEqual(result_no_args.returncode, 2)
 
 

@@ -2,6 +2,8 @@
 
 from unittest.mock import MagicMock
 from scripts.create_db import create_connection
+from subprocess import PIPE
+import sys
 import subprocess
 import unittest
 import sqlite3
@@ -22,7 +24,10 @@ class MyTests(unittest.TestCase):
         self.assertEqual(cc, 'connection failed')
 
     def test_script(self):
-        result_help = subprocess.run(['create_db.py', '-h'], capture_output=True)
+        if sys.version_info[0] <= 3.7:
+            result_help = subprocess.run(['create_db.py', '-h'], stdout=PIPE, stderr=PIPE)
+        else:
+            result_help = subprocess.run(['create_db.py', '-h'], capture_output=True)
         subprocess.run("create_db.py test", shell=True)
         conn = create_connection('test.db')
         c = conn.cursor()
@@ -35,8 +40,15 @@ class MyTests(unittest.TestCase):
                       result_help.stdout)
 
     def test_script_failure(self):
-        result = subprocess.run(['create_db.py', '--database', 'test'], capture_output=True)
-        result_no_args = subprocess.run(['create_db.py'], capture_output=True)
+        if sys.version_info[0] <= 3.7:
+            result = subprocess.run(['create_db.py', '--database', 'test'], stdout=PIPE, stderr=PIPE)
+        else:
+            result = subprocess.run(['create_db.py', '--database', 'test'], capture_output=True)
+        
+        if sys.version_info[0] <= 3.7:
+            result_no_args = subprocess.run(['create_db.py'],stdout=PIPE, stderr=PIPE)
+        else:
+            result_no_args = subprocess.run(['create_db.py'], capture_output=True)
         self.assertEqual(result.returncode, 2)
         self.assertEqual(result_no_args.returncode, 2)
 
