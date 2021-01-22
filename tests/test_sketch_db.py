@@ -28,3 +28,4 @@ class MyTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+    subprocess.run('sketch_db.py test', shell=True)
