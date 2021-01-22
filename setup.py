@@ -4,6 +4,10 @@ from setuptools import setup
 
 setup(
     name='mashpit',
+    version='0.7.1',
+    url='https://github.com/tongzhouxu/mashpit',
+    author='Tongzhou Xu',
+    author_email='tongzhou.xu@uga.edu',
     description='A sketch-based surveillance platform',
     packages=['scripts'],
     scripts=[
