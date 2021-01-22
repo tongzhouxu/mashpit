@@ -3,7 +3,6 @@ python:
   - "3.6"
   - "3.7"
   - "3.8"
-
 before_install:
   - wget http://ftp-trace.ncbi.nlm.nih.gov/sra/sdk/current/sratoolkit.current-centos_linux64.tar.gz -O /tmp/sratoolkit.tar.gz
   - tar -xvf /tmp/sratoolkit.tar.gz
