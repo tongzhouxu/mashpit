@@ -99,7 +99,7 @@ optional arguments:
 
 ## Dependencies
 
-- Python >= 3.6
+- Python >= 3.6 and <=3.8
 - Sra-tools 2.10.8
 
 ## Step-by-step instructions on building a Salmonella Bareilly mashpit database
