@@ -78,47 +78,49 @@ optional arguments:
   query_against_db.py sample_name reading
   ```
 
+## Installation
+- Sra-tools
+  ```
+  wget https://ftp-trace.ncbi.nlm.nih.gov/sra/sdk/2.10.8/sratoolkit.2.10.8-centos_linux64.tar.gz -O /tmp/sratoolkit.tar.gz
+  ```
+  ```
+  tar -xvf /tmp/sratoolkit.tar.gz
+  ```
+  Add sratoolkit to the environment:
+  ```
+  export PATH=$PATH:$PWD/sratoolkit.2.10.8-centos_linux64/bin
+  ```
+
+- Mashpit can be downloaded using pip:
+  ```
+  pip install mashpit
+  ```
+
+
 ## Dependencies
 
 - Python >= 3.6
-- Python packages:
-  - Biopython
-  - Pandas
-  - Sourmash
-- Sra-tools 2.10.7
+- Sra-tools 2.10.8
 
 ## Step-by-step instructions on building a Salmonella Bareilly mashpit database
 
 #### 1. Get mashpit and dependent softwares ready
 
-- Python 3.7
-Python can be downloaded from the [python official website.](https://www.python.org/downloads/)
-
-- Python packages can be installed using commands:
-  ```
-  pip install biopython
-  ```
-  [More information about biopython.](https://biopython.org/wiki/Download)
-  ```
-  pip install pandas
-  ```
-  [More information about pandas.](https://pandas.pydata.org/pandas-docs/stable/getting_started/install.html)
-  ```
-  pip install sourmash
-  ```
-  [More information about sourmash.](https://pypi.org/project/sourmash/)
-
 - Sra-tools
-Installation information can be found [here.](https://github.com/ncbi/sra-tools)
-Please make sure the **dump-ref-fasta** command in sratools is added to PATH before running mashpit.
-  
-- Mashpit can be downloaded using command:
   ```
-  git clone https://github.com/tongzhouxu/mashpit.git
+  wget https://ftp-trace.ncbi.nlm.nih.gov/sra/sdk/2.10.8/sratoolkit.2.10.8-centos_linux64.tar.gz -O /tmp/sratoolkit.tar.gz
   ```
-  Install mashpit:
   ```
-  python setup.py install
+  tar -xvf /tmp/sratoolkit.tar.gz
+  ```
+  Add sratoolkit to the environment:
+  ```
+  export PATH=$PATH:$PWD/sratoolkit.2.10.8-centos_linux64/bin
+  ```
+
+- Mashpit can be downloaded using pip:
+  ```
+  pip install mashpit
   ```
 
 #### 2. Start by creating an empty sqlite database
@@ -159,6 +161,3 @@ Please make sure the **dump-ref-fasta** command in sratools is added to PATH bef
    In this command, test_sample_name should be the full name of the target sample. The target sample should be a genome assembly and exist in the current path.
    
    By running this command, you will see the top 50 results printing out sorted according to the similarity (jaccard_scores). It should also generate a csv file named test_sample_name_output.csv with full results record.
-   
-  
- 
