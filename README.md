@@ -1,4 +1,5 @@
 [![Build Status](https://www.travis-ci.com/tongzhouxu/mashpit.svg?branch=master)](https://www.travis-ci.com/tongzhouxu/mashpit)
+[![PyPI release](https://img.shields.io/pypi/v/mashpit)](https://pypi.python.org/pypi/mashpit/)
 # Mashpit
 Create a database of mash signatures and find the most similar genomes to a target sample 
 
