@@ -18,7 +18,8 @@ def parse_args():
 
 
 # method to download assemblies and get signature files
-def signature(lk, database,assembly_num):
+def signature(lk, database):
+    global assembly_num
     cwd = os.getcwd()
     if len(to_be_sketched) == 0:
         exit(0)
@@ -58,8 +59,8 @@ def signature(lk, database,assembly_num):
         del to_be_sketched[0]
         lk.release()
     
-    # sketching files in a batch number of 100 to save storage space
-    if len(to_be_sketched) == 0 or assembly_num >= 100:
+    # sketching files in a batch number of 1000 to save storage space
+    if len(to_be_sketched) == 0 or assembly_num >= 1000:
         genomes = glob.glob(all_skesa_path)
         minhashes = []
         for g in genomes:
@@ -141,7 +142,7 @@ def main():
 
     while len(to_be_sketched) >= 1:
         for i in range(6):
-            t = threading.Thread(target=signature, args=(lock, args.database,assembly_num,))
+            t = threading.Thread(target=signature, args=(lock, args.database,))
             t.start()
             t.join()
 

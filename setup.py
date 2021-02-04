@@ -2,6 +2,9 @@
 
 from setuptools import setup
 
+with open("README.md", "r") as rm:
+    long_description = rm.read()
+
 setup(
     name='mashpit',
     version='0.7.3',
@@ -9,6 +12,8 @@ setup(
     author='Tongzhou Xu',
     author_email='tongzhou.xu@uga.edu',
     description='A sketch-based surveillance platform',
+    long_description=long_description,
+    long_description_content_type="text/markdown",
     packages=['scripts'],
     scripts=[
         'scripts/create_db.py',
