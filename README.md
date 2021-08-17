@@ -153,6 +153,6 @@ optional arguments:
   -f, --force           overwrite query record if query table exists
 ```
 - Example command
-  ```
-  mashpit query sample_file reading -n 16
-  ```
+```
+mashpit query sample_file reading -n 16
+```
