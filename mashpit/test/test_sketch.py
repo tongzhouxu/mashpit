@@ -8,8 +8,8 @@ import sys
 
 class MyTests(unittest.TestCase):
     def test_script(self):
-        subprocess.run('sketch_db.py test', shell=True)
-        f_expected = open('tests/test.sig', 'r')
+        subprocess.run('mashpit sketch test', shell=True)
+        f_expected = open('mashpit/test/test.sig', 'r')
         sig_expected = f_expected.read()
         f_expected.close()
         f_generated = open('test.sig', 'r')
@@ -19,10 +19,10 @@ class MyTests(unittest.TestCase):
 
 
     def test_script_failure(self):
-        if sys.version_info[0] <= 3.7:
-            result_no_args = subprocess.run(['sketch_db.py'], stdout=PIPE, stderr=PIPE)
+        if sys.version_info.minor <= 6:
+            result_no_args = subprocess.run(['mashpit','sketch'], stdout=PIPE, stderr=PIPE)
         else:
-            result_no_args = subprocess.run(['sketch_db.py'], capture_output=True)
+            result_no_args = subprocess.run(['mashpit','sketch'], capture_output=True)
         self.assertEqual(result_no_args.returncode, 2)
 
 

@@ -1,23 +1,10 @@
 #!/usr/bin/env python3
 
-import argparse
 import os
 import xml.etree.ElementTree as ET
 from Bio import Entrez
-from scripts.create_db import create_connection
-
-
-def parse_args():
-    parser = argparse.ArgumentParser(usage='metadata_sra_db.py <database name> <method> <Entrez email address> '
-                                           '[--key <Entrez API key>] [--list <accession list>] [--term <keyword>] ')
-    parser.add_argument("database", help="<string>: name of the database")
-    parser.add_argument("method", choices=["bioproject_list", "biosample_list", "keyword"], help= "<string>: data collecting method. Available options: bioproject_list, biosample_list, keyword")
-    parser.add_argument("email", help="<string>: Entrez email address")
-    parser.add_argument("-k", "--key", help="<string>: Entrez api key")
-    parser.add_argument("-l", "--list", help="<string>: list file name of bioproject or biosample")
-    parser.add_argument("-t", "--term", help="<string>: query keyword")
-    return parser.parse_args()
-
+from dotenv import load_dotenv
+from mashpit.create import create_connection
 
 # define methods to insert information into the BIOSAMPLE and SRA database
 def insert_biosample(conn, info):
@@ -90,8 +77,8 @@ def metadata_sra_by_biosample_id(id, conn):
             'lat_lon': None,
             'serovar': None,
             'sub_species': None,
-            'Species': None,
-            'Genus': None,
+            'species': None,
+            'genus': None,
             'host': None,
             'host_disease': None,
             'outbreak': None}
@@ -119,12 +106,12 @@ def metadata_sra_by_biosample_id(id, conn):
                 info['lat_lon'] = item.find('VALUE').text
             elif item.find('TAG').text == 'serovar':
                 info['serovar'] = item.find('VALUE').text
-            elif item.find('TAG').text == 'serovar':
+            elif item.find('TAG').text == 'sub_species':
                 info['sub_species'] = item.find('VALUE').text
-            elif item.find('TAG').text == 'serovar':
-                info['Species'] = item.find('VALUE').text
-            elif item.find('TAG').text == 'serovar':
-                info['Genus'] = item.find('VALUE').text
+            elif item.find('TAG').text == 'species':
+                info['species'] = item.find('VALUE').text
+            elif item.find('TAG').text == 'genus':
+                info['genus'] = item.find('VALUE').text
             elif item.find('TAG').text == 'host':
                 info['host'] = item.find('VALUE').text
             elif item.find('TAG').text == 'host_disease':
@@ -154,11 +141,14 @@ def metadata_sra_by_biosample_id(id, conn):
     print("Record stored in the database!")
 
 
-def main():
-    args = parse_args()
-    Entrez.email = args.email
-    if args.key is not None:
-        Entrez.api_key = args.key
+def metadata(args):
+    load_dotenv('.env')
+    if os.environ.get('ENTREZ_EMAIL') == None:
+        print("Error! Entrez email is required. Run mashpit config first.")
+        exit(0)
+    Entrez.email = os.environ.get('ENTREZ_EMAIL')
+    if os.environ.get('ENTREZ_KEY')!= None:
+        Entrez.api_key = os.environ.get('ENTREZ_KEY')
     
     if not os.path.exists("biosample_error_id"):
         os.system("touch biosample_error_id")
@@ -169,14 +159,13 @@ def main():
     if os.path.exists(db_path):
         pass
     else:
-        print("Database does not exist. Please make sure the name is correct or run create_db.py and "
-              "metadata_sra_db.py first")
+        print("Database does not exist. Please make sure the name is correct or run mashpit create first.")
         exit(0)
     conn = create_connection(db_path)
     c = conn.cursor()
     c.execute(''' SELECT count(name) FROM sqlite_master WHERE type='table' AND name='BIOSAMPLE' ''')
     if c.fetchone()[0] == 0:
-        print("No BIOSAMPLE table found in the database. Run create_db.py to create the tables first")
+        print("No BIOSAMPLE table found in the database. Run mashpit create to create the tables first")
         exit(0)
     
     # start searching on NCBI according to the selected method
@@ -216,7 +205,3 @@ def main():
         for id in id_list:
             metadata_sra_by_biosample_id(id, conn)
         conn.commit()
-
-
-if __name__ == '__main__':
-    main()

@@ -7,20 +7,15 @@ with open("README.md", "r") as rm:
 
 setup(
     name='mashpit',
-    version='0.7.4',
+    version='0.8.0',
     url='https://github.com/tongzhouxu/mashpit',
     author='Tongzhou Xu',
     author_email='tongzhou.xu@uga.edu',
     description='A sketch-based surveillance platform',
     long_description=long_description,
     long_description_content_type="text/markdown",
-    packages=['scripts'],
-    scripts=[
-        'scripts/create_db.py',
-        'scripts/metadata_sra_db.py',
-        'scripts/query_against_db.py',
-        'scripts/sketch_db.py',
-    ],
+    packages=['mashpit'],
+    entry_points={'console_scripts':['mashpit=mashpit.mashpit:main']},
     install_requires=[
         'cython~=0.29.21',
         'screed~=1.0.4',
@@ -28,6 +23,7 @@ setup(
         'pandas~=1.0.5',
         'setuptools~=47.1.1',
         'biopython~=1.78',
-        'scipy~=1.5.4'
+        'scipy~=1.5.4',
+        'python-dotenv'
     ],
 )

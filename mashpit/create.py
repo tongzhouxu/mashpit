@@ -1,16 +1,8 @@
 #!/usr/bin/env python3
 
 import os
-import argparse
 import sqlite3
 from sqlite3 import Error
-
-
-def parse_args():
-    parser = argparse.ArgumentParser(usage='create_db.py <database name>')
-    parser.add_argument("database", help="<string>: name of the database")
-    return parser.parse_args()
-
 
 # Define the method to create the database and connect to the database
 def create_connection(db_file):
@@ -33,9 +25,7 @@ def create_table(conn, create_table_sql):
         print(e)
 
 
-def main():
-    args = parse_args()
-
+def create(args):
     cwd = os.getcwd()
     db_path = os.path.join(cwd, args.database + '.db')
     conn = create_connection(db_path)
@@ -52,8 +42,8 @@ def main():
                               lat_lon          TEXT,
                               serovar          TEXT,
                               sub_species      TEXT,
-                              Species          TEXT,
-                              Genus            TEXT,
+                              species          TEXT,
+                              genus            TEXT,
                               host             TEXT,
                               host_disease     TEXT,
                               outbreak         TEXT
@@ -74,7 +64,3 @@ def main():
         conn.close()
     else:
         print("Cannot create the database connection.")
-
-
-if __name__ == '__main__':
-    main()

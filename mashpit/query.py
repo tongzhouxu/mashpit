@@ -1,23 +1,16 @@
 #!/usr/bin/env python3
 
-import argparse
 import csv
 import os
 import ntpath
-import pandas as pd
-from scripts.create_db import create_connection
-from scripts.create_db import create_table
 import screed
 import sourmash
+import multiprocessing
+import pandas as pd
+from mashpit.create import create_connection
+from mashpit.create import create_table
+from multiprocessing import Process
 from sourmash import SourmashSignature, save_signatures, load_one_signature, load_signatures
-
-
-def parse_args():
-    parser = argparse.ArgumentParser(usage='query_against_db.py <sample name> <database name> [--force, -f]')
-    parser.add_argument("sample", help="<string>: path to the sample file")
-    parser.add_argument("database", help="<string>: name of the database")
-    parser.add_argument("-f", "--force", help="overwrite if query table exists", action="store_true")
-    return parser.parse_args()
 
 
 def check_output_existence(conn, args, sample_name):
@@ -32,7 +25,6 @@ def check_output_existence(conn, args, sample_name):
             exit()
     c.close()
     conn.commit()
-
 
 def get_target_sig(sample_name):
     genome = sample_name
@@ -57,9 +49,14 @@ def insert_distance(sample_name, conn, info):
     cur.execute(sql, info)
     return cur.lastrowid
 
+def calculate_dist(i,distance_dict,target_sig):
+    database_sig = load_signatures('outbreak_' + str(i) + '.sig')
+    for sig in database_sig:
+        distance = target_sig.jaccard(sig)
+        distance_dict[sig.name()]=distance
+    return
 
-def main():
-    args = parse_args()
+def query(args):
     sample_path = args.sample
     sample_name = ntpath.basename(sample_path)
 
@@ -68,19 +65,17 @@ def main():
     database_sig_path = os.path.join(cwd, args.database + '.sig')
     target_sig_path = os.path.join(cwd, sample_path + '.sig')
 
-    # check for the existence of the database and tables
+    # check the existence of the database and tables
     if os.path.exists(db_path):
         pass
     else:
-        print("Database does not exist. Please make sure the name is correct or run create_db.py and "
-              "metadata_sra_db.py first")
+        print("Database does not exist. Please make sure the name is correct or run mashpit create")
         exit(0)
     conn = create_connection(db_path)
     c = conn.cursor()
     c.execute(''' SELECT count(name) FROM sqlite_master WHERE type='table' AND name='BIOSAMPLE' ''')
     if c.fetchone()[0] == 0:
-        print("No BIOSAMPLE table found in the database. Please make sure the name is correct or run create_db.py and "
-              "metadata_sra_db.py first")
+        print("No BIOSAMPLE table found in the database. Please make sure the name is correct or run mashpit metadata")
         exit(0)
 
     sql_create_distance = """CREATE TABLE IF NOT EXISTS """ + sample_name + """_distance (
@@ -109,15 +104,31 @@ def main():
     conn.commit()
     get_target_sig(sample_path)
 
-    database_sig = load_signatures(database_sig_path)
     target_sig = load_one_signature(target_sig_path)
-    c = conn.cursor()
-    for sig in database_sig:
-        biosample_acc = select_by_srr(conn,sig.name())
-        distance = target_sig.jaccard(sig)
-        insert_distance(sample_name, conn, [biosample_acc, distance])
 
+    manager = multiprocessing.Manager()
+    distance_manager_dict = manager.dict()
+    if os.path.exists(args.database + '_1.sig'):
+        proc_list = []
+        for i in range(1,args.number):
+            proc = Process(target=calculate_dist, args=(i,distance_manager_dict,target_sig,))
+            proc.start()
+            proc_list.append(proc)
+        for i in proc_list:
+            i.join()
+    else:
+        database_sig=load_signatures(database_sig_path)
+        for sig in database_sig:
+            distance = target_sig.jaccard(sig)
+            distance_manager_dict[sig.name()]=distance
+    # manager dict is a shared variable for multiprocessing but slow in eiteration
+    distance_dict = {}
+    distance_dict.update(distance_manager_dict)
+    for i in distance_dict:
+        biosample_acc = select_by_srr(conn,i)
+        insert_distance(sample_name, conn, [biosample_acc, distance_dict[i]])
     # combine the tables
+    c = conn.cursor()
     c.execute("""INSERT INTO """ + sample_name + """_output SELECT 
                  biosample.biosample_acc,biosample.taxid,
                  biosample.strain,
@@ -144,7 +155,4 @@ def main():
         csv_writer.writerows(c)
 
     conn.commit()
-
-
-if __name__ == '__main__':
-    main()
+    

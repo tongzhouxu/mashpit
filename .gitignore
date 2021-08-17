@@ -1,4 +1,4 @@
 .DS_Store
 .idea/
 .vscode/
-scripts/__pycache__/
+mashpit/__pycache__/

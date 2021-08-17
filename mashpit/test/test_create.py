@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 from unittest.mock import MagicMock
-from scripts.create_db import create_connection
+from mashpit.create import create_connection
 from subprocess import PIPE
 import sys
 import subprocess
@@ -24,33 +24,21 @@ class MyTests(unittest.TestCase):
         self.assertEqual(cc, 'connection failed')
 
     def test_script(self):
-        if sys.version_info[0] <= 3.7:
-            result_help = subprocess.run(['create_db.py', '-h'], stdout=PIPE, stderr=PIPE)
-        else:
-            result_help = subprocess.run(['create_db.py', '-h'], capture_output=True)
-        subprocess.run("create_db.py test", shell=True)
+        subprocess.run('mashpit create test', shell=True)
         conn = create_connection('test.db')
         c = conn.cursor()
         c.execute(''' SELECT count(name) FROM sqlite_master WHERE type='table' AND name='BIOSAMPLE' ''')
         self.assertIsNot(c.fetchone()[0], 0)
         c.execute(''' SELECT count(name) FROM sqlite_master WHERE type='table' AND name='SRA' ''')
         self.assertIsNot(c.fetchone()[0], 0)
-        self.assertIn(b'usage: create_db.py <database name>\n\npositional arguments:\n  database    <string>: name of '
-                      b'the database\n\noptional arguments:\n  -h, --help  show this help message and exit\n',
-                      result_help.stdout)
 
     def test_script_failure(self):
-        if sys.version_info[0] <= 3.7:
-            result = subprocess.run(['create_db.py', '--database', 'test'], stdout=PIPE, stderr=PIPE)
+        if sys.version_info.minor <= 6:
+            result = subprocess.run(['mashpit', 'create'], stdout=PIPE, stderr=PIPE)
         else:
-            result = subprocess.run(['create_db.py', '--database', 'test'], capture_output=True)
-        
-        if sys.version_info[0] <= 3.7:
-            result_no_args = subprocess.run(['create_db.py'],stdout=PIPE, stderr=PIPE)
-        else:
-            result_no_args = subprocess.run(['create_db.py'], capture_output=True)
+            result = subprocess.run(['mashpit', 'create'], capture_output=True)
+
         self.assertEqual(result.returncode, 2)
-        self.assertEqual(result_no_args.returncode, 2)
 
 
 if __name__ == '__main__':

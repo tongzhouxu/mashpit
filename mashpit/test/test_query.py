@@ -9,17 +9,17 @@ import sys
 
 class MyTests(unittest.TestCase):
     def test_script(self):
-        subprocess.run('query_against_db.py tests/test_sample_fasta test', shell=True)
+        subprocess.run('mashpit query mashpit/test/test_sample_fasta test', shell=True)
         conn = create_connection('test.db')
         c = conn.cursor()
         c.execute(''' SELECT COUNT(*) from test_sample_fasta_output ''')
         self.assertEqual(c.fetchone()[0], 3)
 
     def test_script_failure(self):
-        if sys.version_info[0] <= 3.7:
-            result_no_args = subprocess.run(['query_against_db.py'], stdout=PIPE, stderr=PIPE)
+        if sys.version_info.minor <= 6:
+            result_no_args = subprocess.run(['mashpit','query'], stdout=PIPE, stderr=PIPE)
         else:
-            result_no_args = subprocess.run(['query_against_db.py'], capture_output=True)
+            result_no_args = subprocess.run(['mashpit','query'], capture_output=True)
         self.assertEqual(result_no_args.returncode, 2)
 
 
