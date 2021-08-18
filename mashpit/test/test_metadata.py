@@ -20,7 +20,7 @@ class MyTests(unittest.TestCase):
 
     def test_script_failure(self):
         result = subprocess.run(['mashpit', 'metadata', '--list', 'mashpit/test/test_biosample_list.txt'], capture_output=True)
-        result_no_args = subprocess.run(['metadata_sra_db.py'], capture_output=True)
+        result_no_args = subprocess.run(['mashpit','metadata'], capture_output=True)
         self.assertEqual(result.returncode, 2)
         self.assertEqual(result_no_args.returncode, 2)
 
