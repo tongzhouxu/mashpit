@@ -28,7 +28,7 @@ Create a database of mash signatures and find the most similar genomes to a targ
 
 ## Dependencies
 
-- Python >= 3.6 and <=3.8
+- Python 3.7 and 3.8
 - Sra-tools 2.10.8
 
 ## Usage

@@ -33,11 +33,7 @@ class MyTests(unittest.TestCase):
         self.assertIsNot(c.fetchone()[0], 0)
 
     def test_script_failure(self):
-        if sys.version_info.minor <= 6:
-            result = subprocess.run(['mashpit', 'create'], stdout=PIPE, stderr=PIPE)
-        else:
-            result = subprocess.run(['mashpit', 'create'], capture_output=True)
-
+        result = subprocess.run(['mashpit', 'create'], capture_output=True)
         self.assertEqual(result.returncode, 2)
 
 

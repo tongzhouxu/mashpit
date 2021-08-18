@@ -2,7 +2,7 @@
 
 import unittest
 import subprocess
-from scripts.create_db import create_connection
+from mashpit.create import create_connection
 from subprocess import PIPE
 import sys
 
@@ -16,10 +16,7 @@ class MyTests(unittest.TestCase):
         self.assertEqual(c.fetchone()[0], 3)
 
     def test_script_failure(self):
-        if sys.version_info.minor <= 6:
-            result_no_args = subprocess.run(['mashpit','query'], stdout=PIPE, stderr=PIPE)
-        else:
-            result_no_args = subprocess.run(['mashpit','query'], capture_output=True)
+        result_no_args = subprocess.run(['mashpit','query'], capture_output=True)
         self.assertEqual(result_no_args.returncode, 2)
 
 
