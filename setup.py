@@ -7,7 +7,7 @@ with open("README.md", "r") as rm:
 
 setup(
     name='mashpit',
-    version='0.8.0',
+    version='0.8.1',
     url='https://github.com/tongzhouxu/mashpit',
     author='Tongzhou Xu',
     author_email='tongzhou.xu@uga.edu',
