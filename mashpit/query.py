@@ -83,8 +83,8 @@ def query(args):
         biosample_acc = select_by_srr(conn,i)
         biosample_similarity_dict[biosample_acc] = srr_similarity_dict[i]
     
-    # get the top 100 results
-    res_biosample_similarity_dict = dict(sorted(biosample_similarity_dict.items(), key=itemgetter(1),reverse=True)[:100])
+    # get the top 1000 results
+    res_biosample_similarity_dict = dict(sorted(biosample_similarity_dict.items(), key=itemgetter(1),reverse=True)[:1000])
     c.execute('SELECT * FROM biosample')
     output_df = pd.DataFrame([])
     names = [description[0] for description in c.description]
