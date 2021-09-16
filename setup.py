@@ -17,6 +17,7 @@ setup(
     packages=['mashpit'],
     entry_points={'console_scripts':['mashpit=mashpit.mashpit:main']},
     install_requires=[
+        'numpy>=1.17.3',
         'pandas',
         'cython',
         'screed',
