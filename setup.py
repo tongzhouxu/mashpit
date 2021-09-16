@@ -18,12 +18,12 @@ setup(
     entry_points={'console_scripts':['mashpit=mashpit.mashpit:main']},
     install_requires=[
         'numpy>=1.17.3',
-        'pandas',
-        'cython',
-        'screed',
-        'sourmash',
-        'setuptools',
-        'biopython',
+        'cython~=0.29.21',
+        'screed~=1.0.4',
+        'sourmash~=3.3.1',
+        'pandas~=1.0.5',
+        'setuptools~=47.1.1',
+        'biopython~=1.78',
         'python-dotenv'
     ],
 )
