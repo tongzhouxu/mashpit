@@ -51,8 +51,10 @@ def assemblyToSketch(database):
         for i in sigs:
             siglist.append(i)
     for i in range(len(minhashes)):
-        if genomes[i].startswith('SRR') or genomes[i].startswith('ERR'):
-            siglist.append(SourmashSignature(minhashes[i], name=genomes[i].strip(tmp_path).strip('_skesa.fa')))
+        # the method to get the signame may need to be modified
+        signame = genomes[i].strip(tmp_path).strip('_skesa.fa')
+        if signame.startswith('SRR') or signame.startswith('ERR'):
+            siglist.append(SourmashSignature(minhashes[i], name=signame))
     with open(sig_path, 'w') as f:
         save_signatures(siglist, fp=f)
     os.system("rm "+all_skesa_path)
