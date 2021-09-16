@@ -9,7 +9,7 @@ import sys
 class MyTests(unittest.TestCase):
     def test_script(self):
         subprocess.run('mashpit sketch test', shell=True)
-        f_expected = open('mashpit/test/test.sig', 'r')
+        f_expected = open('expected_test.sig', 'r')
         sig_expected = f_expected.read()
         f_expected.close()
         f_generated = open('test.sig', 'r')

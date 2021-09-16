@@ -1,5 +1,6 @@
 language: python
 python:
+  - "3.6"
   - "3.7"
   - "3.8"
 before_install:
@@ -9,6 +10,7 @@ before_install:
 install:
   - python setup.py install
 script:
+  - cd mashpit/test
   - python mashpit/test/test_create.py
   - python mashpit/test/test_metadata.py
   - python mashpit/test/test_sketch.py

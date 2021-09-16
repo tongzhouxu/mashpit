@@ -2,18 +2,15 @@
 
 import unittest
 import subprocess
-from mashpit.create import create_connection
+import pandas as pd
 from subprocess import PIPE
-import sys
 
 
 class MyTests(unittest.TestCase):
     def test_script(self):
-        subprocess.run('mashpit query mashpit/test/test_sample_fasta test', shell=True)
-        conn = create_connection('test.db')
-        c = conn.cursor()
-        c.execute(''' SELECT COUNT(*) from test_sample_fasta_output ''')
-        self.assertEqual(c.fetchone()[0], 3)
+        subprocess.run('mashpit query test_sample_fasta test', shell=True)
+        df = pd.read_csv('test_sample_fasta_output.csv')      
+        self.assertEqual(len(df.index),3)
 
     def test_script_failure(self):
         result_no_args = subprocess.run(['mashpit','query'], capture_output=True)
