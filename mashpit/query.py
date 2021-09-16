@@ -8,23 +8,9 @@ import sourmash
 import multiprocessing
 import pandas as pd
 from mashpit.create import create_connection
-from mashpit.create import create_table
 from multiprocessing import Process
+from operator import itemgetter
 from sourmash import SourmashSignature, save_signatures, load_one_signature, load_signatures
-
-
-def check_output_existence(conn, args, sample_name):
-    c = conn.cursor()
-    c.execute("""SELECT count(name) FROM sqlite_master WHERE type='table' AND name='""" + sample_name + """_output' """)
-    if c.fetchone()[0] == 1:
-        if args.force:
-            c.execute("""DROP TABLE """ + sample_name + """_output""")
-            c.execute("""DROP TABLE """ + sample_name + """_distance""")
-        else:
-            print("Query result exists. Use option -f to overwrite the result")
-            exit()
-    c.close()
-    conn.commit()
 
 def get_target_sig(sample_name):
     genome = sample_name
@@ -35,19 +21,10 @@ def get_target_sig(sample_name):
     with open(sample_name + '.sig', 'wt') as fp:
         save_signatures([sig], fp)
 
-
 def select_by_srr(conn, srr):
     c = conn.cursor()
     cursor = c.execute("SELECT biosample_acc FROM SRA WHERE srr=?", (srr,))
     return cursor.fetchone()[0]
-
-
-def insert_distance(sample_name, conn, info):
-    sql = ''' INSERT INTO ''' + sample_name + '''_distance(biosample_acc,jaccard_similarity)
-              VALUES(?,?) '''
-    cur = conn.cursor()
-    cur.execute(sql, info)
-    return cur.lastrowid
 
 def calculate_dist(i,distance_dict,target_sig):
     database_sig = load_signatures('outbreak_' + str(i) + '.sig')
@@ -57,15 +34,14 @@ def calculate_dist(i,distance_dict,target_sig):
     return
 
 def query(args):
-    sample_path = args.sample
-    sample_name = ntpath.basename(sample_path)
-
+    sample_name = args.sample
+    sample_path = ntpath.basename(sample_name)
     cwd = os.getcwd()
     db_path = os.path.join(cwd, args.database + '.db')
     database_sig_path = os.path.join(cwd, args.database + '.sig')
     target_sig_path = os.path.join(cwd, sample_path + '.sig')
 
-    # check the existence of the database and tables
+    # check if database and tables exist
     if os.path.exists(db_path):
         pass
     else:
@@ -77,41 +53,18 @@ def query(args):
     if c.fetchone()[0] == 0:
         print("No BIOSAMPLE table found in the database. Please make sure the name is correct or run mashpit metadata")
         exit(0)
-
-    sql_create_distance = """CREATE TABLE IF NOT EXISTS """ + sample_name + """_distance (
-                              biosample_acc         TEXT PRIMARY KEY, 
-                              jaccard_similarity    REAL
-                      );"""
-    sql_create_output = """CREATE TABLE IF NOT EXISTS """ + sample_name + """_output (
-                                  biosample_acc    TEXT PRIMARY KEY, 
-                                  taxid            INTEGER,
-                                  strain           TEXT, 
-                                  collected_by     TEXT,
-                                  collection_date  TEXT,
-                                  geo_loc_name     TEXT,
-                                  isolation_source TEXT,
-                                  lat_lon          TEXT,
-                                  genotype         TEXT,
-                                  host             TEXT,
-                                  host_disease     TEXT,
-                                  outbreak         TEXT,
-                                  jaccard_similarity    REAL
-                          );"""
-
-    check_output_existence(conn, args, sample_name)
-    create_table(conn, sql_create_distance)
-    create_table(conn, sql_create_output)
-    conn.commit()
+    
+    # sketch the query sample and load the signature
     get_target_sig(sample_path)
-
     target_sig = load_one_signature(target_sig_path)
 
+    # manager dict: a shared variable for multiprocessing but slow in iteration
     manager = multiprocessing.Manager()
-    distance_manager_dict = manager.dict()
+    srr_similarity_manager_dict = manager.dict()
     if os.path.exists(args.database + '_1.sig'):
         proc_list = []
         for i in range(1,args.number):
-            proc = Process(target=calculate_dist, args=(i,distance_manager_dict,target_sig,))
+            proc = Process(target=calculate_dist, args=(i,srr_similarity_manager_dict,target_sig,))
             proc.start()
             proc_list.append(proc)
         for i in proc_list:
@@ -119,40 +72,28 @@ def query(args):
     else:
         database_sig=load_signatures(database_sig_path)
         for sig in database_sig:
-            distance = target_sig.jaccard(sig)
-            distance_manager_dict[sig.name()]=distance
-    # manager dict is a shared variable for multiprocessing but slow in eiteration
-    distance_dict = {}
-    distance_dict.update(distance_manager_dict)
-    for i in distance_dict:
-        biosample_acc = select_by_srr(conn,i)
-        insert_distance(sample_name, conn, [biosample_acc, distance_dict[i]])
-    # combine the tables
-    c = conn.cursor()
-    c.execute("""INSERT INTO """ + sample_name + """_output SELECT 
-                 biosample.biosample_acc,biosample.taxid,
-                 biosample.strain,
-                 biosample.collected_by,
-                 biosample.collection_date,
-                 biosample.geo_loc_name,
-                 biosample.isolation_source,
-                 biosample.lat_lon,
-                 biosample.serovar,
-                 biosample.host,
-                 biosample.host_disease,
-                 biosample.outbreak,
-                 """ + sample_name + """_distance.jaccard_similarity 
-                 From BIOSAMPLE
-                 INNER JOIN """ + sample_name + """_distance
-                 ON biosample.biosample_acc=""" + sample_name + """_distance.biosample_acc""")
-    print("Printing out the top 50 results.")
-    print(pd.read_sql_query("SELECT * FROM " + sample_name + "_output ORDER BY jaccard_similarity DESC LIMIT 50", conn))
-    print("Output file has been stored in the database table " + sample_name + "_output and exported in CSV format.")
-    c.execute("SELECT * FROM " + sample_name + "_output ORDER BY jaccard_similarity DESC")
-    with open(sample_name + "_output.csv", "w") as csv_file:
-        csv_writer = csv.writer(csv_file, delimiter="\t")
-        csv_writer.writerow([i[0] for i in c.description])
-        csv_writer.writerows(c)
+            similarity = target_sig.jaccard(sig)
+            srr_similarity_manager_dict[sig.name()]=similarity
 
-    conn.commit()
+    srr_similarity_dict = {}
+    srr_similarity_dict.update(srr_similarity_manager_dict)
+
+    biosample_similarity_dict = {}
+    for i in srr_similarity_dict:
+        biosample_acc = select_by_srr(conn,i)
+        biosample_similarity_dict[biosample_acc] = srr_similarity_dict[i]
+    
+    # get the top 100 results
+    res_biosample_similarity_dict = dict(sorted(biosample_similarity_dict.items(), key=itemgetter(1),reverse=True)[:100])
+    c.execute('SELECT * FROM biosample')
+    output_df = pd.DataFrame([])
+    names = [description[0] for description in c.description]
+    for i in res_biosample_similarity_dict:
+        sql_query = pd.read_sql_query("select * from biosample where biosample_acc = '" +str(i)+"'", conn)
+        df_query = pd.DataFrame(sql_query,columns=names)
+        df_query['similarity_score'] = res_biosample_similarity_dict[i]
+        output_df = output_df.append(df_query,ignore_index=True)
+    print(output_df) 
+    output_df.to_csv(sample_name+'_output.csv',index=True)
+
     

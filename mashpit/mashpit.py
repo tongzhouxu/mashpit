@@ -34,9 +34,10 @@ def commandToArgs(commandline):
     description = 'Collect metadata from NCBI based on bioproject/biosample accession or keywords'
     subparser = subparsers.add_parser("metadata", help=description,description=description)
     subparser.add_argument(dest="database", type=str, help="Name of the database")
-    subparser.add_argument(dest="method", choices=["bioproject_list", "biosample_list", "keyword"], help= "Metadata collecting method. Available options: bioproject_list, biosample_list, keyword")
+    subparser.add_argument(dest="method", choices=["bioproject_list", "biosample_list", "keyword","import"], help= "Metadata collecting method. Available options: bioproject_list, biosample_list, keyword and import")
     subparser.add_argument("-l", "--list", help="File name of a list of bioproject or biosample")
     subparser.add_argument("-t", "--term", help="Query keyword")
+    subparser.add_argument("-m", "--metadata", help="Metadata file")
     subparser.set_defaults(func=metadata.metadata)
     # Add "sketch" subcommand
     description = 'Build sketches for the records in the database'
@@ -56,7 +57,6 @@ def commandToArgs(commandline):
     subparser.add_argument(dest="sample", type=str, help="target sample file path")
     subparser.add_argument(dest="database", type=str, help="name of the database")
     subparser.add_argument("-n","--number", type=int, help="number of separated signature file")
-    subparser.add_argument("-f", "--force", help="overwrite query record if query table exists", action="store_true")
     subparser.set_defaults(func=query.query)
 
     args = parser.parse_args(commandline)

@@ -2,9 +2,12 @@
 
 import os
 import xml.etree.ElementTree as ET
+import pandas as pd
 from Bio import Entrez
 from dotenv import load_dotenv
 from mashpit.create import create_connection
+
+# TODO: add methods to import metadata from pathogen detection metadata table
 
 # define methods to insert information into the BIOSAMPLE and SRA database
 def insert_biosample(conn, info):
@@ -140,6 +143,57 @@ def metadata_sra_by_biosample_id(id, conn):
         insert_sra(conn, info_sra_list)
     print("Record stored in the database!")
 
+def import_metadata(metadatafile,conn):
+    metadata_df = pd.read_csv(metadatafile, sep='\t', header=0, low_memory=False)
+    metadata_df = metadata_df.where(pd.notnull(metadata_df), None)
+    info = {'biosample_acc': None,
+            'taxid': None,
+            'strain': None,
+            'collected_by': None,
+            'collection_date': None,
+            'geo_loc_name': None,
+            'isolation_source': None,
+            'lat_lon': None,
+            'serovar': None,
+            'sub_species': None,
+            'species': None,
+            'genus': None,
+            'host': None,
+            'host_disease': None,
+            'outbreak': None}
+    info_sra = {'srr': None, 'biosample_acc': None}
+
+    for index, row in metadata_df.iterrows():
+        info['biosample_acc'] = row['biosample_acc']
+        info['taxid'] = row['taxid']
+        info['strain'] = row['strain']
+        info['collected_by'] = row['collected_by']
+        info['collection_date'] = row['collection_date']
+        info['geo_loc_name'] = row['geo_loc_name']
+        info['isolation_source'] = row['isolation_source']
+        info['lat_lon'] = row['lat_lon']
+        info['serovar'] = row['serovar']
+        info['host'] = row['host']
+        info['host_disease'] = row['host_disease']
+        info['outbreak'] = row['outbreak']
+        info_sra['srr'] = row['Run']
+        info_sra['biosample_acc'] = row['biosample_acc']
+        # check whether the information is missing
+        for key in info:
+            if info[key] is None:
+                info[key] = 'Missing'
+
+        info_list = list(info.values())
+        info_sra_list = list(info_sra.values())
+        if info_sra['srr'] is None:
+            continue
+        
+        with conn:
+            insert_biosample(conn, info_list)
+            insert_sra(conn, info_sra_list)
+        print("Record stored in the database!")
+
+    return
 
 def metadata(args):
     load_dotenv('.env')
@@ -195,7 +249,10 @@ def metadata(args):
             handle_search = Entrez.esearch(db="biosample", term=biosample)
             record_search = Entrez.read(handle_search)
             id_list = record_search['IdList']
-            metadata_sra_by_biosample_id(id_list[0], conn)
+            try:
+                metadata_sra_by_biosample_id(id_list[0], conn)
+            except:
+                continue
             conn.commit()
         f.close()
     elif args.method == "keyword":
@@ -205,3 +262,6 @@ def metadata(args):
         for id in id_list:
             metadata_sra_by_biosample_id(id, conn)
         conn.commit()
+    elif args.method == "import":
+        metadatafile = args.metadata
+        import_metadata(metadatafile,conn)
