@@ -25,11 +25,11 @@ def select_by_srr(conn, srr):
     cursor = c.execute("SELECT biosample_acc FROM SRA WHERE srr=?", (srr,))
     return cursor.fetchone()[0]
 
-def calculate_dist(i,distance_dict,target_sig):
-    database_sig = load_signatures('outbreak_' + str(i) + '.sig')
+def calculate_similarity(i,similarity_dict,target_sig,database):
+    database_sig = load_signatures(database + '_' + str(i) + '.sig')
     for sig in database_sig:
-        distance = target_sig.jaccard(sig)
-        distance_dict[sig.name()]=distance
+        similarity = target_sig.jaccard(sig)
+        similarity_dict[sig.name()]=similarity
     return
 
 def query(args):
@@ -63,7 +63,7 @@ def query(args):
     if os.path.exists(args.database + '_1.sig'):
         proc_list = []
         for i in range(1,args.number):
-            proc = Process(target=calculate_dist, args=(i,srr_similarity_manager_dict,target_sig,))
+            proc = Process(target=calculate_similarity, args=(i,srr_similarity_manager_dict,target_sig,args.database))
             proc.start()
             proc_list.append(proc)
         for i in proc_list:
