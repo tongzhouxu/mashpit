@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 import os
-from sourmash import load_signatures, save_signatures
+from sourmash import load_file_as_signatures, save_signatures
 
 def split(args):
     cwd = os.getcwd()
@@ -10,10 +10,10 @@ def split(args):
     if os.path.exists(database_sig_path):
         pass
     else:
-        print("Database does not exist. Please make sure the name is correct or run mashpit create")
+        print("Database does not exist. Please make sure the name is correct or run mashpit build")
         exit(0)
     sig_list=[database_sig_path]
-    database_sig = load_signatures(database_sig_path)
+    database_sig = load_file_as_signatures(database_sig_path)
     for i in database_sig:
         sig_list.append(i)
 

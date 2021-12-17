@@ -10,7 +10,4 @@ install:
   - python setup.py install
 script:
   - cd $PWD/mashpit/test
-  - python test_create.py
-  - python test_metadata.py
-  - python test_sketch.py
-  - python test_query.py
+
