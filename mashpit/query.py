@@ -6,7 +6,7 @@ import screed
 import sourmash
 import multiprocessing
 import pandas as pd
-from mashpit.create import create_connection
+from mashpit.build import create_connection
 from multiprocessing import Process
 from operator import itemgetter
 from sourmash import SourmashSignature, save_signatures, load_one_signature, load_file_as_signatures

@@ -11,11 +11,15 @@ tar -xvf /tmp/sratoolkit.tar.gz
 export PATH=$PATH:$PWD/sratoolkit.2.10.8-centos_linux64/bin
 ```
 
-Install mashpit using pip or conda:
+Install mashpit using pip:
   ```
   pip install mashpit
   ```
-
+Or manually install after git clone:
+  ```
+  git clone https://github.com/tongzhouxu/mashpit.git
+  python setup.py install 
+  ```
 Ngstool is needed to build mashpit database on Raspberry Pi:
 1. Build and install ngs. Follow instructions at [https://github.com/ncbi/ngs/wiki/Building-and-Installing-from-Source](https://github.com/ncbi/ngs/wiki/Building-and-Installing-from-Source)
 2. Install ncbi-vdb. Follow instructions at [https://github.com/ncbi/ncbi-vdb/wiki/Building-and-Installing-from-Source](https://github.com/ncbi/ncbi-vdb/wiki/Building-and-Installing-from-Source)
