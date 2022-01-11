@@ -35,7 +35,7 @@ We are in the era of genomic epidemiology.
 For many transmissible diseases, large percentages of the pathogenic agent are being whole genome sequenced.
 Then, their sequences are being compared in various ways.
 One example is SARS-CoV-2, where the virus is being sequenced and then shared through either Global Initiative on Sharing Avian Influenza Data (GISAID) or National Institute for Biotechnology Information (NCBI).
-Next, these sequences are downloaded and compared in various platforms such as NextStrain [@10.1093/bioinformatics/bty407].
+Next, these sequences are downloaded and compared in various platforms such as NextStrain [@hadfield2018nextstrain].
 From these comparisons, scientists can help track down transmission of the virus or describe its population structure.
 Another example is _Salmonella_, where it is sequenced through the PulseNet molecular surveillance network and then uploaded to NCBI [@nadon2017pulsenet].
 From there, these sequences can be analyzed in a variety of ways including multilocus sequence typing (MLST).
