@@ -89,7 +89,7 @@ To address any needs for speed and sensitivity, we created Mashpit.
 
 Mashpit is comprised of three major parts: A min-hash database, its associated metadata, and the min-hash querying.
 
-The database is created with an interface to Mash, called Sourmash (REF).
+The database is created with an interface to Mash, called Sourmash [@Brown2016].
 Each genome is imported by sketching it and adding it to a Sourmash signature database, which integrates the sketches into Python.
 Each genome can also have an entry in the associated metadata. These data include date of isolation, geography, host age range, and other information that could be useful in an epidemiological investigation.
 If the import is performed by downloading the genome from NCBI, then its associated BioSample data are also imported into the associated metadata.
