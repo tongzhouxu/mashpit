@@ -108,6 +108,15 @@ All associated metadata are included in the spreadsheet.
 The speed of the query is determined by the database size (Figure X). 
 _Tongzhou please finish this paragraph after finishing the figure_
 
+# Discussion
+
+We present Mashpit, a rapid genomic epidemiology platform.
+Due to the underlying algorithm Min-Hash, it is excedingly fast.
+It also has such a small hard drive and computational footprint that it can basically be used on common scientific workstations.
+However, we note that the Mash distance does not correlate well to well-established distances such as MLST.
+Therefore we recommend that this platform is used as a first-pass to filter unrelated samples before using a more established protocol such as MLST.
+In conclusion, we believe that Mashpit is an essential genomic epidemiology tool.
+
 # Figures
 
 * Time to integrate one Salmonella genome (maybe)
