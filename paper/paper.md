@@ -93,11 +93,12 @@ The database is created with an interface to Mash, called Sourmash (REF).
 Each genome is imported by sketching it and adding it to a Sourmash signature database, which integrates the sketches into Python.
 Each genome can also have an entry in the associated metadata. These data include date of isolation, geography, host age range, and other information that could be useful in an epidemiological investigation.
 If the import is performed by downloading the genome from NCBI, then its associated BioSample data are also imported into the associated metadata.
-We have calculated that it takes about X seconds to download each genome from NCBI, X seconds to sketch and add it to the signature database, and then X seconds to add the metadata.
+We have calculated that it takes about 1-2 seconds to download each genome from NCBI, 0.5 seconds to sketch it and add it to the signature database.
+For 399162 samples, it takes 2-3 minutes to import all NCBI metadata.
+Finally, it takes 3-4 hours total to select a representative for each NCBI cluster.
 
-Because it takes X seconds to import each genome, we have created a versioned Mashpit database,
-available from our GitHub site.
-This database includes all genomes listed in the NCBI PD as Salmonella.
+Because it takes more than a few hours to create a large comprehensive database,
+we have created a versioned Mashpit database available from our GitHub site.
 
 With the database and its metadata complete, a user could perform a query.
 The query is an assembly fasta file, which is then sketched and compared against the signature database.
