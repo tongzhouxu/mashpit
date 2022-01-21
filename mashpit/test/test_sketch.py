@@ -2,11 +2,10 @@
 
 import unittest
 import subprocess
-from subprocess import PIPE
-import sys
 
 
 class MyTests(unittest.TestCase):
+
     def test_script(self):
         subprocess.run('mashpit sketch test', shell=True)
         f_expected = open('expected_test.sig', 'r')

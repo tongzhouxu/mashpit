@@ -32,6 +32,119 @@ def create_table(conn, create_table_sql):
     except Error as e:
         print(e)
 
+# create sqlite3 database with the tables
+def create_database(conn):
+    # metadata and accessions of a sample
+    metadata_table = """CREATE TABLE IF NOT EXISTS METADATA (
+                              biosample_acc    TEXT PRIMARY KEY, 
+                              taxid            INTEGER,
+                              strain           TEXT, 
+                              collected_by     TEXT,
+                              collection_date  TEXT,
+                              geo_loc_name     TEXT,
+                              isolation_source TEXT,
+                              lat_lon          TEXT,
+                              serovar          TEXT,
+                              sub_species      TEXT,
+                              species          TEXT,
+                              genus            TEXT,
+                              host             TEXT,
+                              host_disease     TEXT,
+                              outbreak         TEXT,
+                              srr              TEXT,
+                              PDT_acc          TEXT,
+                              PDS_acc          TEXT
+                        );"""
+    # a description table to keep a record of the dabtabase type, (species and PD version if it is a standard database)
+    description_table = """CREATE TABLE IF NOT EXISTS DESC (
+                              name    TEXT PRIMARY KEY, 
+                              value            TEXT
+                        );"""
+    # create tables
+    create_table(conn, metadata_table)
+    create_table(conn, description_table)
+    conn.commit()
+
+class PDGParser(HTMLParser):
+    list = []
+    def handle_data(self, data):
+        if str(data).endswith('tsv'):
+            self.list.append(data)
+
+def download_from_PD(pathogen_name):
+    response = urllib.request.urlopen('https://ftp.ncbi.nlm.nih.gov/pathogen/Results/'+pathogen_name+'/latest_snps/Metadata/')
+    metadata_html = response.read().decode('utf-8')
+    parser = PDGParser()
+    parser.feed(metadata_html)
+    metadata_file = parser.list[0]
+    pdg_acc = metadata_file.strip('.metadata.tsv')
+    parser.close()
+    # TODO: progress bar for downloading the files
+    urllib.request.urlretrieve('https://ftp.ncbi.nlm.nih.gov/pathogen/Results/'+pathogen_name+'/latest_snps/Metadata/'+metadata_file,metadata_file)
+    urllib.request.urlretrieve('https://ftp.ncbi.nlm.nih.gov/pathogen/Results/'+pathogen_name+'/latest_snps/Clusters/'+pdg_acc+'.reference_target.SNP_distances.tsv',pdg_acc+'.reference_target.SNP_distances.tsv')
+    
+    # return the metadata file name
+    return metadata_file
+
+def calculate_centroid(df_raw,pdg_acc,cwd):
+    # Calculate the centroid for each cluster
+    subprocess.run('cat '+pdg_acc+'.reference_target.SNP_distances.tsv | cut -f1,5,9,12 > '+pdg_acc+'_selected_distance.tsv',shell=True,check=True)
+    distance_file = pdg_acc+'_selected_distance.tsv'
+    df_distance = pd.read_csv(distance_file,header=0,sep='\t')
+    cluster_list = df_distance.groupby('PDS_acc').size().index.tolist()
+    cluster_center_dict = {'PDS_acc':[],'target_acc':[]}
+    # TODO: a custom folder name for the skesa assemblies maybe
+    if os.path.exists(os.path.join(cwd,'fasta')):
+        pass
+    else:
+        os.mkdir(os.path.join(cwd,'fasta'))
+    for cluster in cluster_list:
+        # get all isolates in this cluster
+        df_cluster =  df_distance.loc[df_distance['PDS_acc'] == cluster]
+        # append the dataset with switched columns to get a "full" pairwise distance matrix
+        df_append = df_cluster.append(df_cluster.rename(columns={"target_acc_1":"target_acc_2","target_acc_2":"target_acc_1"}))
+        # add up all distances for one target and try downloading the skesa assembly for the one with minimum distances
+        for target in df_append.groupby('target_acc_1')['delta_positions_unambiguous'].sum().sort_values().index.tolist():
+            SRR =  str(df_raw.loc[df_raw['target_acc'] == target]['Run'].iloc[0])
+            if SRR == 'nan':
+                continue
+            try:
+                # try downloading the skesa assembly, if failed turn to next genome in this cluster
+                subprocess.check_call(
+                    "dump-ref-fasta http://sra-download.ncbi.nlm.nih.gov/srapub_files/" + SRR + "_" + SRR + ".realign > fasta/" +
+                    SRR + "_skeasa.fasta", shell=True, stderr=subprocess.DEVNULL)
+                cluster_center_dict['PDS_acc'].append(cluster)
+                cluster_center_dict['target_acc'].append(target)
+                break
+            except subprocess.CalledProcessError:
+                continue
+    # delete all the empty fasta files
+    os.system('find . -size 0 -delete')
+    df_cluster_center = pd.from_dict(cluster_center_dict)
+    df_cluster_center.to_csv(pdg_acc+'_PDS_center.csv')
+
+    return df_cluster_center
+
+# build a standard database based on a Pathogen Detection metadata file
+def build_standard(args,conn,cwd):
+    # download the latest PD metadata files and get the metadata file name
+    pathogen_name = args.species
+    metadata_file = download_from_PD(pathogen_name)
+    
+    df_raw = pd.read_csv(metadata_file,header=0,sep='\t')
+    pdg_acc = metadata_file.strip('.metadata.tsv')
+    # Calculate the centroid for each cluster
+    df_cluster_center = calculate_centroid(metadata_file,cwd)
+
+    df_cluster_center_metadata = df_cluster_center['target_acc'].to_frame().join(df_raw.set_index('target_acc'),on='target_acc')
+    import_metadata(df_cluster_center_metadata,conn)
+    c = conn.cursor()
+    c.execute("INSERT INTO DESC VALUES ('Type','Standard');")
+    c.execute("INSERT INTO DESC VALUES ('Species',"+args.species+");")
+    c.execute("INSERT INTO DESC VALUES ('Version',"+pdg_acc+");")
+    conn.commit()
+
+
 def insert_metadata(conn, info):
     sql = '''INSERT OR IGNORE INTO METADATA(
              biosample_acc,
@@ -55,9 +168,7 @@ def insert_metadata(conn, info):
              VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) '''
     c = conn.cursor()
     c.execute(sql, info)
-
-
-# define the method to get metadata from NCBI according to the biosample record id
+# get metadata from NCBI according to the biosample record id and the download the skesa assembly
 def metadata_by_biosample_id(id, conn):
     # get the xml formatted information for the biosample
     handle_link_sra = Entrez.elink(db='sra', dbfrom='biosample', id=id)
@@ -156,7 +267,7 @@ def metadata_by_biosample_id(id, conn):
                     SRR + "_skeasa.fasta", shell=True, stderr=subprocess.DEVNULL)
     except subprocess.CalledProcessError:
         return
- 
+# import metadata to database directly from pathogen detection metadata dataframe
 def import_metadata(metadata_df,conn):
     info = {'biosample_acc': None,
             'taxid': None,
@@ -205,106 +316,19 @@ def import_metadata(metadata_df,conn):
 
     return
 
-class PDGParser(HTMLParser):
-    list = []
-    def handle_data(self, data):
-        if str(data).endswith('tsv'):
-            self.list.append(data)
 
 def build(args):
+    #TODO: allow a custom directory in addition to default cwd
     cwd = os.getcwd()
     db_path = os.path.join(cwd, args.name + '.db')
 
     #TODO: need methods to check if database already exists
     conn = create_connection(db_path)
-
-    # metadata and accessions of a sample
-    metadata_table = """CREATE TABLE IF NOT EXISTS METADATA (
-                              biosample_acc    TEXT PRIMARY KEY, 
-                              taxid            INTEGER,
-                              strain           TEXT, 
-                              collected_by     TEXT,
-                              collection_date  TEXT,
-                              geo_loc_name     TEXT,
-                              isolation_source TEXT,
-                              lat_lon          TEXT,
-                              serovar          TEXT,
-                              sub_species      TEXT,
-                              species          TEXT,
-                              genus            TEXT,
-                              host             TEXT,
-                              host_disease     TEXT,
-                              outbreak         TEXT,
-                              srr              TEXT,
-                              PDT_acc          TEXT,
-                              PDS_acc          TEXT
-                        );"""
-    # a description table to keep a record of the dabtabase type, (species and PD version if it is a standard database
-    description_table = """CREATE TABLE IF NOT EXISTS DESC (
-                              name    TEXT PRIMARY KEY, 
-                              value            TEXT
-                        );"""
-    # create tables
-    create_table(conn, metadata_table)
-    create_table(conn, description_table)
-    conn.commit()
+    create_database(conn)
     
     # two types of database: standard/custom
     if args.type == 'standard':
-        # get the latest PD metadatafiles
-        pathogen_name = args.species
-        response = urllib.request.urlopen('https://ftp.ncbi.nlm.nih.gov/pathogen/Results/'+pathogen_name+'/latest_snps/Metadata/')
-        metadata_html = response.read().decode('utf-8')
-        parser = PDGParser()
-        parser.feed(metadata_html)
-        metadata_file = parser.list[0]
-        pdg_acc = metadata_file.strip('.metadata.tsv')
-        parser.close()
-        # TODO: progress bar for downloading the files
-        urllib.request.urlretrieve('https://ftp.ncbi.nlm.nih.gov/pathogen/Results/'+pathogen_name+'/latest_snps/Metadata/'+metadata_file,metadata_file)
-        urllib.request.urlretrieve('https://ftp.ncbi.nlm.nih.gov/pathogen/Results/'+pathogen_name+'/latest_snps/Clusters/'+pdg_acc+'.reference_target.SNP_distances.tsv',pdg_acc+'.reference_target.SNP_distances.tsv')
-   
-        # Calculate the centroid for each cluster
-        df_raw = pd.read_csv(metadata_file,header=0,sep='\t')
-        subprocess.run('cat '+pdg_acc+'.reference_target.SNP_distances.tsv | cut -f1,5,9,12 > '+pdg_acc+'_selected_distance.tsv',shell=True,check=True)
-        distance_file = pdg_acc+'_selected_distance.tsv'
-        df_distance = pd.read_csv(distance_file,header=0,sep='\t')
-        cluster_list = df_distance.groupby('PDS_acc').size().index.tolist()
-        cluster_center_dict = {'PDS_acc':[],'target_acc':[]}
-        # TODO: a custom folder name for the skesa assemblies maybe
-        if os.path.exists(os.path.join(cwd,'fasta')):
-            pass
-        else:
-            os.mkdir(os.path.join(cwd,'fasta'))
-        for cluster in cluster_list:
-            # get all isolates in this cluster
-            df_cluster =  df_distance.loc[df_distance['PDS_acc'] == cluster]
-            # append the dataset with switched columns to get a "full" pairwise distance matrix
-            df_append = df_cluster.append(df_cluster.rename(columns={"target_acc_1":"target_acc_2","target_acc_2":"target_acc_1"}))
-            # add up all distances for one target and try downloading the skesa assembly for the one with minimum distances
-            for target in df_append.groupby('target_acc_1')['delta_positions_unambiguous'].sum().sort_values().index.tolist():
-                SRR =  str(df_raw.loc[df_raw['target_acc'] == target]['Run'].iloc[0])
-                if SRR == 'nan':
-                    continue
-                try:
-                    subprocess.check_call(
-                        "dump-ref-fasta http://sra-download.ncbi.nlm.nih.gov/srapub_files/" + SRR + "_" + SRR + ".realign > fasta/" +
-                        SRR + "_skeasa.fasta", shell=True, stderr=subprocess.DEVNULL)
-                    cluster_center_dict['PDS_acc'].append(cluster)
-                    cluster_center_dict['target_acc'].append(target)
-                    break
-                except subprocess.CalledProcessError:
-                    continue
-        df_cluster_center = pd.from_dict(cluster_center_dict)
-        df_cluster_center.to_csv(pdg_acc+'_PDS_center.csv')
-
-        df_cluster_center_metadata = df_cluster_center['target_acc'].to_frame().join(df_raw.set_index('target_acc'),on='target_acc')
-        import_metadata(df_cluster_center_metadata,conn)
-        c = conn.cursor()
-        c.execute("INSERT INTO DESC VALUES ('Type','Standard');")
-        c.execute("INSERT INTO DESC VALUES ('Species',"+args.species+");")
-        c.execute("INSERT INTO DESC VALUES ('Version',"+pdg_acc+");")
-        conn.commit()
+        build_standard(args,conn,cwd)
     # Build a custom database 
     else:
         load_dotenv('.env')

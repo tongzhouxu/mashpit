@@ -17,12 +17,13 @@ setup(
     packages=['mashpit'],
     entry_points={'console_scripts':['mashpit=mashpit.mashpit:main']},
     install_requires=[
-        'numpy>=1.21.2',
+        'numpy~=1.19.5',
         'screed~=1.0.5',
         'sourmash~=4.2.2',
-        'pandas~=1.3.4',
+        'pandas~=1.1.5',
         'setuptools~=47.1.1',
         'biopython~=1.78',
+        'scipy~=1.7.3',
         'python-dotenv'
     ],
 )
