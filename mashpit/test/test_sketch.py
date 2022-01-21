@@ -2,7 +2,7 @@
 
 import unittest
 import subprocess
-from sourmash import load_file_as_signatures,SourmashSignature
+from sourmash import load_file_as_signatures
 
 class MyTests(unittest.TestCase):
 
@@ -18,7 +18,7 @@ class MyTests(unittest.TestCase):
         for sig in sig_generated:
             sig_dict_generated[str(sig)]=str(sig.md5sum())
 
-        self.assertdictEqual(dict(sorted(sig_dict_expected.items())), dict(sorted(sig_dict_generated.items())))
+        self.assertDictEqual(dict(sorted(sig_dict_expected.items())), dict(sorted(sig_dict_generated.items())))
 
 
     def test_script_failure(self):
