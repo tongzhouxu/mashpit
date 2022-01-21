@@ -1,0 +1,4 @@
+,biosample_acc,taxid,strain,collected_by,collection_date,geo_loc_name,isolation_source,lat_lon,serovar,sub_species,species,genus,host,host_disease,outbreak,srr,PDT_acc,PDS_acc,similarity_score
+0,SAMN12930415,149539,CVM N18S1407,FDA,2018,USA:MN,Chicken Breasts,missing,Enteritidis,enterica,missing,missing,missing,missing,missing,SRR10237562,missing,missing,0.909
+1,SAMN16400807,149539,FSIS22029373,USDA-FSIS,2020,USA:AR,comminuted chicken,missing,Salmonella enterica subsp. enterica serovar Enteritidis,enterica,missing,missing,missing,missing,missing,SRR12799207,missing,missing,0.904
+2,SAMN16400724,149539,FSIS22029367,USDA-FSIS,2020,USA:DE,comminuted chicken,missing,Salmonella enterica subsp. enterica serovar Enteritidis,enterica,missing,missing,missing,missing,missing,SRR12799171,missing,missing,0.898
