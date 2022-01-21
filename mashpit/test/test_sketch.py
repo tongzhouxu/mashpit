@@ -2,20 +2,23 @@
 
 import unittest
 import subprocess
-
+from sourmash import load_file_as_signatures,SourmashSignature
 
 class MyTests(unittest.TestCase):
-    maxDiff = None
-    
+
     def test_script(self):
         subprocess.run('mashpit sketch test', shell=True)
-        f_expected = open('expected_test.sig', 'r')
-        sig_expected = f_expected.read()
-        f_expected.close()
-        f_generated = open('test.sig', 'r')
-        sig_generated = f_generated.read()
-        f_generated.close()
-        self.assertEqual(sig_expected, sig_generated)
+        sig_dict_expected = {}
+        sig_expected = load_file_as_signatures('expected_test.sig')
+        for sig in sig_expected:
+            sig_dict_expected[str(sig)]=str(sig.md5sum())
+
+        sig_dict_generated = {}    
+        sig_generated = load_file_as_signatures('test.sig')
+        for sig in sig_generated:
+            sig_dict_generated[str(sig)]=str(sig.md5sum())
+
+        self.assertdictEqual(dict(sorted(sig_dict_expected.items())), dict(sorted(sig_dict_generated.items())))
 
 
     def test_script_failure(self):
