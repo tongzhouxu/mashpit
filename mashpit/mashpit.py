@@ -8,7 +8,7 @@ from mashpit import build
 from mashpit import config
 from mashpit import sketch
 from mashpit import query
-from mashpit import split
+
 
 def commandToArgs(commandline):
     parser = argparse.ArgumentParser(description="A sketch-based surveillance platform.")
