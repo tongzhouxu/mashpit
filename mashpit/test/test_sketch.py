@@ -5,7 +5,8 @@ import subprocess
 
 
 class MyTests(unittest.TestCase):
-
+    maxDiff = None
+    
     def test_script(self):
         subprocess.run('mashpit sketch test', shell=True)
         f_expected = open('expected_test.sig', 'r')
