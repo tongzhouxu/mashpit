@@ -33,8 +33,8 @@ def calculate_similarity(i,similarity_dict,target_sig,database):
     return
 
 def query(args):
-    sample_name = args.sample
-    sample_path = ntpath.basename(sample_name)
+    sample_path = args.sample
+    sample_name = ntpath.basename(sample_path)
     cwd = os.getcwd()
     db_path = os.path.join(cwd, args.database + '.db')
     database_sig_path = os.path.join(cwd, args.database + '.sig')

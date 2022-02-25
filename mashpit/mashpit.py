@@ -8,7 +8,7 @@ from mashpit import build
 from mashpit import config
 from mashpit import sketch
 from mashpit import query
-from mashpit import split
+
 
 def commandToArgs(commandline):
     parser = argparse.ArgumentParser(description="A sketch-based surveillance platform.")
@@ -41,12 +41,7 @@ def commandToArgs(commandline):
     subparser = subparsers.add_parser("sketch", help=description,description=description)
     subparser.add_argument(dest="name", type=str,help="Mashpit database name")
     subparser.set_defaults(func=sketch.sketch)
-    # "split" subcommand
-    description = 'Split large signature file to speed up the query'
-    subparser = subparsers.add_parser("split", help=description,description=description)
-    subparser.add_argument(dest="database", type=str,help="Name of the database")
-    subparser.add_argument("-n","--number",type=int,default=16,help="Number of files to be splited into. Default is 16.")
-    subparser.set_defaults(func=split.split)
+    
     # "query" subcommand
     description = 'Find the most similar assemblies to the target sample'
     subparser = subparsers.add_parser("query",help=description,description=description)

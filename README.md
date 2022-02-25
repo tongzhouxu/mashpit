@@ -110,25 +110,6 @@ optional arguments:
 ```
 mashpit sketch db_name
 ```
-### (Optional) Split the sigature file
-```
-usage: mashpit split [-h] [-n NUMBER] database
-
-Split large signature file to speed up the query
-
-positional arguments:
-  database              Name of the database
-
-optional arguments:
-  -h, --help            show this help message and exit
-  -n NUMBER, --number NUMBER
-                        Number of files to be splited into. Default is 16.
-```
-- Example command
-```
-mashpit split db_name -n 16
-```
-
 ### 3. Run a query
 ```
 usage: mashpit query [-h] [-n NUMBER] sample database
@@ -141,8 +122,6 @@ positional arguments:
 
 optional arguments:
   -h, --help            show this help message and exit
-  -n NUMBER, --number NUMBER
-                        number of splited signature file
 ```
 - Example command
 ```

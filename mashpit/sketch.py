@@ -23,7 +23,7 @@ def sketch(args):
         print("Fasta folder not found.")
         exit(0)
 
-    sig_file_name = args.name + 'sig'
+    sig_file_name = args.name + '.sig'
     
     all_fasta_path = os.path.join(fasta_folder,"*_skeasa.fasta")
     genomes_list = glob.glob(all_fasta_path)
