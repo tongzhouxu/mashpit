@@ -118,7 +118,7 @@ In conclusion, we believe that Mashpit is an essential genomic epidemiology tool
 
 # Figures
 
-![The speed of an individual query is related to the size of the database linearly.\label{fig:queryTime}](query_time.png)
+![The speed of an individual query strongly correlates to the size of the database with a linear relationship. For every 10^4 samples, the time of each query increases about 6.8 seconds.\label{fig:queryTime}](query_time.png)
 
 # Acknowledgements
 
