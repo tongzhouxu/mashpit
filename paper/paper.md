@@ -48,7 +48,7 @@ to independent researchers.
 A very commonly used software for Min-Hash is called Mash [@ondov2016mash].
 Querying with Mash can be about 3 orders of magnitude faster than other common methods like
 Basic Local Alignment Search Tool (BLAST)
-and can have a smaller disk footprint [@camacho2009blast+].
+and can have a smaller disk footprint [@camacho2009blast].
 Therefore it can be run on more common scientific workstations.
 However, it does not yield metadata (e.g., date of isolation)
 which is necessary to gain meaning (e.g., if it is an ongoing outbreak or if it happened 20 years ago).
