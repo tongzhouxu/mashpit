@@ -105,8 +105,7 @@ The query is an assembly fasta file, which is then sketched and compared against
 The query then returns a tab delimited spreadsheet, sorted by Mash distance.
 All associated metadata are included in the spreadsheet.
 
-The speed of the query is determined by the database size (Figure X). 
-_Tongzhou please finish this paragraph after finishing the figure_
+The speed of the query is determined by the database size \autoref{fig:queryTime}. 
 
 # Discussion
 
@@ -119,9 +118,7 @@ In conclusion, we believe that Mashpit is an essential genomic epidemiology tool
 
 # Figures
 
-* Time to integrate one Salmonella genome (maybe)
-* size of database per sample (maybe)
-* speed of query per database size
+![Figure 1. The speed of an individual query is related to the size of the database linearly.\label{fig:queryTime}](query_time.png)
 
 # Acknowledgements
 
