@@ -34,15 +34,12 @@ bibliography: paper.bib
 We are in the era of genomic epidemiology.
 For many transmissible diseases, large percentages of the pathogenic agent are being whole genome sequenced.
 Then, their sequences are being compared in various ways.
-One example is SARS-CoV-2, where the virus is being sequenced and then shared through either Global Initiative on Sharing Avian Influenza Data (GISAID) or National Institute for Biotechnology Information (NCBI).
-Next, these sequences are downloaded and compared in various platforms such as NextStrain [@hadfield2018nextstrain].
-From these comparisons, scientists can help track down transmission of the virus or describe its population structure.
-Another example is _Salmonella_, where it is sequenced through the PulseNet molecular surveillance network and then uploaded to NCBI [@nadon2017pulsenet].
+One example is _Salmonella_, where it is sequenced through the PulseNet molecular surveillance network and then uploaded to NCBI [@nadon2017pulsenet].
 From there, these sequences can be analyzed in a variety of ways including multilocus sequence typing (MLST).
 These comparisons can help track down a food vehicle and lead to actionable results
 such as a food recall or inspection.
 
-Amazingly for these organisms, at the time of this writing in January 2022, there are more than 3 million SARS-CoV-2 genomes and more than 500 thousand _Salmonella_ genomes.
+Amazingly at the time of this writing in January 2022, there are more than 500 thousand _Salmonella_ genomes.
 These numbers are expected to increase dramatically and therefore faster methods are needed.
 
 There have been some major advances to increase the speed of these comparisons.
@@ -51,7 +48,7 @@ to independent researchers.
 A very commonly used software for Min-Hash is called Mash [@ondov2016mash].
 Querying with Mash can be about 3 orders of magnitude faster than other common methods like
 Basic Local Alignment Search Tool (BLAST)
-and can have a smaller disk footprint.
+and can have a smaller disk footprint [@camacho2009blast+].
 Therefore it can be run on more common scientific workstations.
 However, it does not yield metadata (e.g., date of isolation)
 which is necessary to gain meaning (e.g., if it is an ongoing outbreak or if it happened 20 years ago).
@@ -72,15 +69,11 @@ This is done through hurculean efforts, cutting edge algorithms, and powerful co
 However, smaller laboratories usually have a scientific workstation or similar,
 much different than a cluster computing system.
 
-We note that for some organisms like SARS-CoV-2 and _Salmonella_, queries
+We note that for some organisms like _Salmonella_, queries
 can be of a sensitive nature.
-For example, a state laboratory finding a new variant could be very sensitive
-until it has been conclusively confirmed.
-If it is a negative result, then the public would have been needlessly alerted
-and therefore the query is sensitive.
-Another example is that if a regulatory agency uncovers _Salmonella_ in a food
+For example, if a regulatory agency uncovers _Salmonella_ in a food
 processing plant, then it is possible there would need to be regulatory action.
-However, this result would need to be confirmed conclusively such that, again,
+However, this result would need to be confirmed conclusively such that
 the public would not be needlessly alerted and a business needlessly affected.
 
 To address any needs for speed and sensitivity, we created Mashpit.
@@ -126,3 +119,4 @@ Financial support for the development of Mashpit was provided by the Center for 
 The findings and conclusions in this report are those of the authors and do not necessarily represent the official position of the Centers for Disease Control and Prevention.
 
 # References
+
