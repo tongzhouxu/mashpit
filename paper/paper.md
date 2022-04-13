@@ -32,30 +32,31 @@ bibliography: paper.bib
 # Summary
 
 We are in the era of genomic epidemiology.
-For many transmissible diseases, large percentages of the pathogenic agent are being whole genome sequenced.
-Then, their sequences are being compared in various ways.
-One example is _Salmonella_, where it is sequenced through the PulseNet molecular surveillance network and then uploaded to NCBI [@nadon2017pulsenet].
-From there, these sequences can be analyzed in a variety of ways including multilocus sequence typing (MLST).
-These comparisons can help track down a food vehicle and lead to actionable results
-such as a food recall or inspection.
+The surveillance of many transmissible diseases is increasingly being conducted through whole genome sequencing of pathogenic agents.
+One notable example is _Salmonella_, a major foodborne pathogen routinely sequenced by surveillance programs such as PulseNet.
+Large volumes of _Salmonella_ genomes from these programs are deposited in database systems including NCBI [@nadon2017pulsenet].
+These publicly available genomes can be analyzed in a variety of ways such as serotyping [@zhang2019seqsero2],
+multilocus sequence typing (MLST) [@zhou2020enterobase],
+and single nucleotide polymorphism (SNP) typing [@katz2017comparative].
+These analyses provide important laboratory evidence for outbreak surveillance and investigation.
 
-Amazingly at the time of this writing in January 2022, there are more than 500 thousand _Salmonella_ genomes.
+At the time of this writing in March 2022, there are more than 400 thousand _Salmonella_ genomes
+and more than half a million other pathogen genomes at NCBI PAthogen Detection (https://www.ncbi.nlm.nih.gov/pathogens).
 These numbers are expected to increase dramatically and therefore faster methods are needed.
 
-There have been some major advances to increase the speed of these comparisons.
-We observed that a new algorithm for genomics called Min-Hash became available
-to independent researchers.
+There have been some major advances to scale up bioinformatic analyses to large volumes of pathogenic genomes.
+One approach is to provide centralized resources that integrate data and analytical tools.
+For example, Pathogen Detection combines information from at least three databases: SRA, GenBank, and BioSample.
+About once a day, it compares all genomes of a given taxon, separates all genomes into individual clusters using MLST, and then creates a phylogeny for each cluster using single nucleotide polymorphism (SNP) analysis.
+This method is quite comprehensive but it relies on each sample being public, and it cannot be executed locally.
+
+Another approach is to provide new tools for decentralized and customized manipulation of genomics resources.
+We observed that an algorithm for genomics called Min-Hash is well positioned for this purpose.
 A very commonly used software for Min-Hash is called Mash [@ondov2016mash].
 Querying with Mash can be about 3 orders of magnitude faster than other common methods like
 Basic Local Alignment Search Tool (BLAST)
 and can have a smaller disk footprint [@camacho2009blast].
 Therefore it can be run on more common scientific workstations.
-However, it does not yield metadata (e.g., date of isolation)
-which is necessary to gain meaning (e.g., if it is an ongoing outbreak or if it happened 20 years ago).
-On the other hand, NCBI has also created the Pathogen Detection (PD) pipeline and site.
-It combines information from at least three databases: SRA, GenBank, and BioSample.
-About once a day, it compares all genomes of a given taxon, separates all genomes into individual clusters using MLST, and then creates a phylogeny for each cluster using single nucleotide polymorphism (SNP) analysis.
-This method is quite comprehensive but it relies on each sample being public, and it cannot be executed locally.
 
 We present Mashpit, a new rapid genomic epidemiology platform to query against these large groups of genomes on a local computer.
 
@@ -71,10 +72,7 @@ much different than a cluster computing system.
 
 We note that for some organisms like _Salmonella_, queries
 can be of a sensitive nature.
-For example, if a regulatory agency uncovers _Salmonella_ in a food
-processing plant, then it is possible there would need to be regulatory action.
-However, this result would need to be confirmed conclusively such that
-the public would not be needlessly alerted and a business needlessly affected.
+For example, harboring isolates in food production environments that are related to outbreak isolates is often perceived as a potential liability by food establishments, therefore thwarting the efforts to use and share the genomes of these organisms.
 
 To address any needs for speed and sensitivity, we created Mashpit.
 
@@ -83,7 +81,7 @@ To address any needs for speed and sensitivity, we created Mashpit.
 Mashpit is comprised of three major parts: A min-hash database, its associated metadata, and the min-hash querying.
 
 The database is created with an interface to Mash, called Sourmash [@Brown2016].
-Each genome is imported by sketching it and adding it to a Sourmash signature database, which integrates the sketches into Python.
+Each genome is imported by sketching it and adding it to a Sourmash signature database.
 Each genome can also have an entry in the associated metadata. These data include date of isolation, geography, host age range, and other information that could be useful in an epidemiological investigation.
 If the import is performed by downloading the genome from NCBI, then its associated BioSample data are also imported into the associated metadata.
 We have calculated that it takes about 1-2 seconds to download each genome from NCBI, 0.5 seconds to sketch it and add it to the signature database.
