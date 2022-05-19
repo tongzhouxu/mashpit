@@ -10,13 +10,13 @@ authors:
   - name: Tongzhou Xu
     affiliation: 1
     orcid: 0000-0002-3829-8688
-  - name: Henk C. den Bakker
+  - name: Henk C. den Bakker^[Corresponding author]
     orcid: 0000-0002-4086-1580
     affiliation: 1
-  - name: Xiangyu Deng
+  - name: Xiangyu Deng^[Corresponding author]
     orcid: 0000-0002-7251-2529
     affiliation: 1
-  - name: Lee S. Katz
+  - name: Lee S. Katz^[Corresponding author]
     affiliation: "1, 2"
     orcid: 0000-0002-2533-9161
 affiliations:
