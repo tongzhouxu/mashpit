@@ -1,115 +1,113 @@
 ---
-title: 'Gala: A Python package for galactic dynamics'
+title: 'Mashpit: sketching out genomic epidemiology'
 tags:
   - Python
-  - astronomy
-  - dynamics
-  - galactic dynamics
-  - milky way
+  - Min-hash 
+  - Mash
+  - Sourmash
+  - Outbreak
 authors:
-  - name: Adrian M. Price-Whelan^[Custom footnotes for e.g. denoting who the corresponding author is can be included like this.]
-    orcid: 0000-0003-0872-7098
-    affiliation: "1, 2" # (Multiple affiliations must be quoted)
-  - name: Author Without ORCID
-    affiliation: 2
-  - name: Author with no affiliation
-    affiliation: 3
+  - name: Tongzhou Xu
+    affiliation: 1
+    orcid: 0000-0002-3829-8688
+  - name: Henk C. den Bakker
+    orcid: 0000-0002-4086-1580
+    affiliation: 1
+  - name: Xiangyu Deng
+    orcid: 0000-0002-7251-2529
+    affiliation: 1
+  - name: Lee S. Katz
+    affiliation: "1, 2"
+    orcid: 0000-0002-2533-9161
 affiliations:
- - name: Lyman Spitzer, Jr. Fellow, Princeton University
+ - name: Center for Food Safety, University of Georgia, Griffin, GA, USA
    index: 1
- - name: Institution Name
+ - name: Enteric Diseases Laboratory Branch (EDLB), Centers for Disease Control and Prevention, Atlanta, GA, USA
    index: 2
- - name: Independent Researcher
-   index: 3
-date: 13 August 2017
+date: 18 May 2022
 bibliography: paper.bib
 
-# Optional fields if submitting to a AAS journal too, see this blog post:
-# https://blog.joss.theoj.org/2018/12/a-new-collaboration-with-aas-publishing
-aas-doi: 10.3847/xxxxx <- update this with the DOI from AAS once you know it.
-aas-journal: Astrophysical Journal <- The name of the AAS journal.
 ---
 
 # Summary
 
-The forces on stars, galaxies, and dark matter under external gravitational
-fields lead to the dynamical evolution of structures in the universe. The orbits
-of these bodies are therefore key to understanding the formation, history, and
-future state of galaxies. The field of "galactic dynamics," which aims to model
-the gravitating components of galaxies to study their structure and evolution,
-is now well-established, commonly taught, and frequently used in astronomy.
-Aside from toy problems and demonstrations, the majority of problems require
-efficient numerical tools, many of which require the same base code (e.g., for
-performing numerical orbit integration).
+We are in the era of genomic epidemiology.
+The surveillance of many transmissible diseases is increasingly being conducted through whole genome sequencing of pathogenic agents. 
+One notable example is _Salmonella_, a major foodborne pathogen routinely sequenced by surveillance programs such as PulseNet. 
+Large volumes of _Salmonella_ genomes from these programs are deposited in database systems including NCBI [@nadon2017pulsenet]. 
+These publicly available genomes can be analyzed in a variety of ways such as serotyping [@zhang2019seqsero2],
+multilocus sequence typing (MLST) [@zhou2020enterobase], and single nucleotide polymorphism (SNP) typing [@katz2017comparative].
+These analyses provide important laboratory evidence for outbreak surveillance and investigation.
+
+At the time of this writing in March 2022, there are more than 400 thousand _Salmonella_ genomes and more than half a million other pathogen genomes at NCBI Pathogen Detection (https://www.ncbi.nlm.nih.gov/pathogens).
+These numbers are expected to increase dramatically and therefore faster methods are needed.
+
+There have been some major advances to scale up bioinformatic analyses to large volumes of pathogenic genomes.
+One approach is to provide centralized resources that integrate data and analytical tools.
+For example, Pathogen Detection combines information from three databases: SRA, GenBank, and BioSample.
+About once a day, it compares all genomes of a given taxon, separates all genomes into individual clusters using MLST, and then creates a phylogeny for each cluster using SNP analysis.
+This method is quite comprehensive, but it relies on each sample being public, and it cannot be executed locally.
+
+Another approach is to provide new tools for decentralized and customized manipulation of genomics resources.
+We observed that an algorithm for genomics called Min-Hash is well positioned for this purpose.
+A commonly used software for Min-Hash is called Mash [@ondov2016mash].
+Querying with Mash can be about 3 orders of magnitude faster than other common methods like Basic Local Alignment Search Tool (BLAST) and can have a smaller disk footprint [@camacho2009blast].
+Therefore it can be run on more common scientific workstations.
+
+We present Mashpit, a new rapid genomic epidemiology platform to query against these large groups of genomes on a local computer.
 
 # Statement of need 
 
-`Gala` is an Astropy-affiliated Python package for galactic dynamics. Python
-enables wrapping low-level languages (e.g., C) for speed without losing
-flexibility or ease-of-use in the user-interface. The API for `Gala` was
-designed to provide a class-based and user-friendly interface to fast (C or
-Cython-optimized) implementations of common operations such as gravitational
-potential and force evaluation, orbit integration, dynamical transformations,
-and chaos indicators for nonlinear dynamics. `Gala` also relies heavily on and
-interfaces well with the implementations of physical units and astronomical
-coordinate systems in the `Astropy` package [@astropy] (`astropy.units` and
-`astropy.coordinates`).
+Querying a sample against these magnitudes of genomes is becoming less sustainable, especially for smaller laboratories.
+Currently, GISAID and NCBI are staying ahead of the curve by producing a global tree of each organism every day.
+This requires herculean efforts, cutting edge algorithms, and powerful computers.
+However, smaller laboratories usually have a scientific workstation or similar equipment, much different than a cluster computing system.
 
-`Gala` was designed to be used by both astronomical researchers and by
-students in courses on gravitational dynamics or astronomy. It has already been
-used in a number of scientific publications [@Pearson:2017] and has also been
-used in graduate courses on Galactic dynamics to, e.g., provide interactive
-visualizations of textbook material [@Binney:2008]. The combination of speed,
-design, and support for Astropy functionality in `Gala` will enable exciting
-scientific explorations of forthcoming data releases from the *Gaia* mission
-[@gaia] by students and experts alike.
+We note that for some organisms like Salmonella, queries can be of a sensitive nature.
+For example, harboring isolates in food production environments that are related to outbreak isolates is often perceived as a potential liability by food establishments, therefore thwarting the efforts to use and share the genomes of these organisms.
 
-# Mathematics
+To address any needs for speed and sensitivity, we created Mashpit.
+Mashpit queries genomes locally using Mash, thereby achieving speedy results while keeping any sensitive queries offline.
 
-Single dollars ($) are required for inline mathematics e.g. $f(x) = e^{\pi/x}$
+# Mashpit design
 
-Double dollars make self-standing equations:
+Mashpit is comprised of three major parts: A min-hash database, its associated metadata, and the min-hash querying.
 
-$$\Theta(x) = \left\{\begin{array}{l}
-0\textrm{ if } x < 0\cr
-1\textrm{ else}
-\end{array}\right.$$
+The database is created with an interface to Mash, called Sourmash [@Brown2016].
+Each genome is imported by sketching it and adding it to a Sourmash signature database.
+Each genome can also have an entry in the associated metadata.
+These data include date of isolation, geography, host age range, and other information that could be useful in an epidemiological investigation.
+If the import is performed by downloading the genome from NCBI, then its associated BioSample data are also imported into the associated metadata.
+We have calculated that it takes about 1-2 seconds to download each genome from NCBI, 0.5 seconds to sketch it and add it to the signature database.
+For 399162 samples, it takes 2-3 minutes to import all NCBI metadata.
+Finally, it takes 3-4 hours total to select a representative for each NCBI cluster.
 
-You can also use plain \LaTeX for equations
-\begin{equation}\label{eq:fourier}
-\hat f(\omega) = \int_{-\infty}^{\infty} f(x) e^{i\omega x} dx
-\end{equation}
-and refer to \autoref{eq:fourier} from text.
+Because it takes more than a few hours to create a large comprehensive database, we have created a versioned Salmonella Mashpit database available from our GitHub site.
 
-# Citations
+With the database and its metadata complete, a user could perform a query.
+The query is an assembly fasta file, which is then sketched and compared against the signature database.
+The query then returns a tab delimited spreadsheet, sorted by Mash distance.
+All associated metadata are included in the spreadsheet.
 
-Citations to entries in paper.bib should be in
-[rMarkdown](http://rmarkdown.rstudio.com/authoring_bibliographies_and_citations.html)
-format.
+The speed of the query is determined by the database size (\autoref{fig:queryTime}).
 
-If you want to cite a software repository URL (e.g. something on GitHub without a preferred
-citation) then you can do it with the example BibTeX entry below for @fidgit.
+# Discussion
 
-For a quick reference, the following citation commands can be used:
-- `@author:2001`  ->  "Author et al. (2001)"
-- `[@author:2001]` -> "(Author et al., 2001)"
-- `[@author1:2001; @author2:2001]` -> "(Author1 et al., 2001; Author2 et al., 2002)"
+We present Mashpit, a rapid genomic epidemiology platform.
+Due to the underlying algorithm Min-Hash, it is exceedingly fast.
+It also has such a small hard drive and computational footprint that it can basically be used on common scientific workstations.
+However, we note that the Mash distance does not correlate well to well-established distances such as MLST.
+Therefore we recommend that this platform is used as a first-pass to filter unrelated samples before using a more established protocol such as MLST.
+In conclusion, we believe that Mashpit is an essential genomic epidemiology tool.
 
 # Figures
 
-Figures can be included like this:
-![Caption for example figure.\label{fig:example}](figure.png)
-and referenced from text using \autoref{fig:example}.
-
-Fenced code blocks are rendered with syntax highlighting:
-```python
-for n in range(10):
-    yield f(n)
-```	
+![The speed of an individual query strongly correlates to the size of the database with a linear relationship. For every 10^4 samples, the time of each query increases about 6.8 seconds.\label{fig:queryTime}](query_time.png)
 
 # Acknowledgements
 
-We acknowledge contributions from Brigitta Sipocz, Syrtis Major, and Semyeong
-Oh, and support from Kathryn Johnston during the genesis of this project.
+Financial support for the development of Mashpit was provided by the Center for Food Safety at the University of Georgia, USA.
+The findings and conclusions in this report are those of the authors and do not necessarily represent the official position of the Centers for Disease Control and Prevention.
 
 # References
+
