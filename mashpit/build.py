@@ -7,6 +7,7 @@ import urllib.request
 
 import xml.etree.ElementTree as ET
 import pandas as pd
+import numpy as np
 
 from sqlite3 import Error
 from Bio import Entrez
@@ -86,18 +87,14 @@ def download_from_PD(pathogen_name):
     # return the metadata file name
     return metadata_file
 
-def calculate_centroid(df_raw,pdg_acc,cwd):
+def calculate_centroid(df_raw,pdg_acc,skesa_path):
     # Calculate the centroid for each cluster
     subprocess.run('cat '+pdg_acc+'.reference_target.SNP_distances.tsv | cut -f1,5,9,12 > '+pdg_acc+'_selected_distance.tsv',shell=True,check=True)
     distance_file = pdg_acc+'_selected_distance.tsv'
     df_distance = pd.read_csv(distance_file,header=0,sep='\t')
     cluster_list = df_distance.groupby('PDS_acc').size().index.tolist()
     cluster_center_dict = {'PDS_acc':[],'target_acc':[]}
-    # TODO: a custom folder name for the skesa assemblies maybe
-    if os.path.exists(os.path.join(cwd,'fasta')):
-        pass
-    else:
-        os.mkdir(os.path.join(cwd,'fasta'))
+ 
     for cluster in cluster_list:
         # get all isolates in this cluster
         df_cluster =  df_distance.loc[df_distance['PDS_acc'] == cluster]
@@ -106,27 +103,28 @@ def calculate_centroid(df_raw,pdg_acc,cwd):
         # add up all distances for one target and try downloading the skesa assembly for the one with minimum distances
         for target in df_append.groupby('target_acc_1')['delta_positions_unambiguous'].sum().sort_values().index.tolist():
             SRR =  str(df_raw.loc[df_raw['target_acc'] == target]['Run'].iloc[0])
-            if SRR == 'nan':
+            if SRR == np.nan:
                 continue
-            try:
-                # try downloading the skesa assembly, if failed turn to next genome in this cluster
-                subprocess.check_call(
-                    "dump-ref-fasta http://sra-download.ncbi.nlm.nih.gov/srapub_files/" + SRR + "_" + SRR + ".realign > fasta/" +
-                    SRR + "_skeasa.fasta", shell=True, stderr=subprocess.DEVNULL)
-                cluster_center_dict['PDS_acc'].append(cluster)
-                cluster_center_dict['target_acc'].append(target)
-                break
-            except subprocess.CalledProcessError:
-                continue
+            else:
+                try:
+                    # try downloading the skesa assembly, if failed turn to next genome in this cluster
+                    subprocess.check_call(
+                    "dump-ref-fasta http://sra-download.ncbi.nlm.nih.gov/srapub_files/" + SRR + "_" + SRR + ".realign > "+os.path.join(skesa_path,SRR + "_skesa.fasta"), shell=True, stderr=subprocess.DEVNULL)
+                except subprocess.CalledProcessError:
+                    continue
+                else:
+                    cluster_center_dict['PDS_acc'].append(cluster)
+                    cluster_center_dict['target_acc'].append(target)
+                    break
     # delete all the empty fasta files
     os.system('find . -size 0 -delete')
-    df_cluster_center = pd.from_dict(cluster_center_dict)
+    df_cluster_center = pd.DataFrame.from_dict(cluster_center_dict)
     df_cluster_center.to_csv(pdg_acc+'_PDS_center.csv')
 
     return df_cluster_center
 
 # build a standard database based on a Pathogen Detection metadata file
-def build_standard(args,conn,cwd):
+def build_standard(args,conn,skesa_path):
     # download the latest PD metadata files and get the metadata file name
     pathogen_name = args.species
     metadata_file = download_from_PD(pathogen_name)
@@ -134,8 +132,7 @@ def build_standard(args,conn,cwd):
     df_raw = pd.read_csv(metadata_file,header=0,sep='\t')
     pdg_acc = metadata_file.strip('.metadata.tsv')
     # Calculate the centroid for each cluster
-    df_cluster_center = calculate_centroid(metadata_file,cwd)
-
+    df_cluster_center = calculate_centroid(df_raw,pdg_acc,skesa_path)
     df_cluster_center_metadata = df_cluster_center['target_acc'].to_frame().join(df_raw.set_index('target_acc'),on='target_acc')
     import_metadata(df_cluster_center_metadata,conn)
     c = conn.cursor()
@@ -169,7 +166,7 @@ def insert_metadata(conn, info):
     c = conn.cursor()
     c.execute(sql, info)
 # get metadata from NCBI according to the biosample record id and the download the skesa assembly
-def metadata_by_biosample_id(id, conn):
+def build_biosample_id(id, conn, skesa_path):
     # get the xml formatted information for the biosample
     handle_link_sra = Entrez.elink(db='sra', dbfrom='biosample', id=id)
     record_link_sra = Entrez.read(handle_link_sra)
@@ -263,8 +260,7 @@ def metadata_by_biosample_id(id, conn):
         return
     try:
         subprocess.check_call(
-                    "dump-ref-fasta http://sra-download.ncbi.nlm.nih.gov/srapub_files/" + SRR + "_" + SRR + ".realign > fasta/" +
-                    SRR + "_skeasa.fasta", shell=True, stderr=subprocess.DEVNULL)
+                    "dump-ref-fasta http://sra-download.ncbi.nlm.nih.gov/srapub_files/" + SRR + "_" + SRR + ".realign > "+os.path.join(skesa_path,SRR + "_skesa.fasta"), shell=True, stderr=subprocess.DEVNULL)
     except subprocess.CalledProcessError:
         return
 # import metadata to database directly from pathogen detection metadata dataframe
@@ -326,9 +322,18 @@ def build(args):
     conn = create_connection(db_path)
     create_database(conn)
     
+    if args.assemblies is not None:
+        skesa_folder_name = args.assemblies
+    else:
+        skesa_folder_name = 'fasta'
+    skesa_path = os.path.join(cwd,skesa_folder_name)
+    if os.path.exists(skesa_path):
+        pass
+    else:
+        os.mkdir(skesa_path)
     # two types of database: standard/custom
     if args.type == 'standard':
-        build_standard(args,conn,cwd)
+        build_standard(args,conn,skesa_path)
     # Build a custom database 
     else:
         load_dotenv('.env')
@@ -341,13 +346,6 @@ def build(args):
     
         if not os.path.exists("biosample.error"):
             os.system("touch biosample.error")
-        cwd = os.getcwd()
-        # TODO: a custom folder name for the skesa assemblies maybe
-        db_path = os.path.join(cwd, args.name + '.db') 
-        if os.path.exists(os.path.join(cwd,'fasta')):
-            pass
-        else:
-            os.mkdir(os.path.join(cwd,'fasta'))
         if args.type== "biosample_list":
             f = open(args.list, 'r')
             biosample_list = f.readlines()
@@ -358,7 +356,7 @@ def build(args):
                 record_search = Entrez.read(handle_search)
                 id_list = record_search['IdList']
                 try:
-                    metadata_by_biosample_id(id_list[0], conn)
+                    build_biosample_id(id_list[0], conn, skesa_path)
                 except:
                     f_error_log = open("biosample.error", 'a')
                     f_error_log.write(biosample + '\n')
@@ -375,7 +373,7 @@ def build(args):
             id_list = record_search['IdList']
             for id in id_list:
                 try:
-                    metadata_by_biosample_id(id, conn)
+                    build_biosample_id(id, conn, skesa_path)
                 except:
                     handle_fetch_biosample = Entrez.efetch(db='biosample', id=id)
                     xml_result_biosample = handle_fetch_biosample.read()

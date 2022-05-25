@@ -9,9 +9,9 @@ import os
 class MyTests(unittest.TestCase):
     
     def test_config(self):
-        subprocess.run('mashpit config tongzhouxu97@gmail.com', shell=True)
+        subprocess.run('mashpit config test@test.com', shell=True)
         load_dotenv('.env')
-        self.assertEqual(os.environ.get('ENTREZ_EMAIL'), "tongzhouxu97@gmail.com")
+        self.assertEqual(os.environ.get('ENTREZ_EMAIL'), "test@test.com")
 
 if __name__ == '__main__':
     unittest.main()

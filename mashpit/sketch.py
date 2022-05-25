@@ -16,7 +16,10 @@ def sketch(args):
         print("Database file not found. Please make sure the name is correct or run mashpit build.")
         exit(0)
 
-    fasta_folder = os.path.join(cwd,'fasta')
+    if args.assemblies is not None:
+        fasta_folder = args.assemblies
+    else:
+        fasta_folder = 'fasta'
     if os.path.exists(fasta_folder):
         pass
     else:
@@ -25,7 +28,7 @@ def sketch(args):
 
     sig_file_name = args.name + '.sig'
     
-    all_fasta_path = os.path.join(fasta_folder,"*_skeasa.fasta")
+    all_fasta_path = os.path.join(fasta_folder,"*_skesa.fasta")
     genomes_list = glob.glob(all_fasta_path)
     minhashes = []
     for genome in genomes_list:
@@ -36,7 +39,7 @@ def sketch(args):
     siglist = []
 
     for i in range(len(minhashes)):
-        signame = genomes_list[i].strip(fasta_folder).strip('_skesa.fasta')
+        signame = genomes_list[i].strip(fasta_folder).strip('_skesa.fasta').strip('/')
         siglist.append(SourmashSignature(minhashes[i], name=signame))
     with open(sig_file_name,'w') as f:
         save_signatures(siglist,fp=f)

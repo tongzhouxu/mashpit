@@ -25,6 +25,7 @@ def commandToArgs(commandline):
     subparser.add_argument(dest="type", choices=["standard", "biosample_list", "keyword"], help= "Database type: standard or custom")
     subparser.add_argument(dest="name", type=str, help="Mashpit database name")
     subparser.add_argument("-s", "--species", default="Salmonella",help="Query keyword")
+    subparser.add_argument("-a", "--assemblies", default="fasta",help="folder name for skesa assembly")
     subparser.add_argument("-l", "--list", help="File containing a list of biosample accessions")
     subparser.add_argument("-t", "--term", help="Query keyword")
     subparser.set_defaults(func=build.build)
@@ -40,6 +41,7 @@ def commandToArgs(commandline):
     description = 'Build sketches for the records in the database'
     subparser = subparsers.add_parser("sketch", help=description,description=description)
     subparser.add_argument(dest="name", type=str,help="Mashpit database name")
+    subparser.add_argument("-a", "--assemblies", default="fasta",help="folder name for skesa assembly")
     subparser.set_defaults(func=sketch.sketch)
     
     # "query" subcommand
@@ -47,7 +49,6 @@ def commandToArgs(commandline):
     subparser = subparsers.add_parser("query",help=description,description=description)
     subparser.add_argument(dest="sample", type=str, help="file name of the query sample")
     subparser.add_argument(dest="database", type=str, help="name of the database")
-    subparser.add_argument("-n","--number", type=int, help="number of splited signature file")
     subparser.set_defaults(func=query.query)
 
     args = parser.parse_args(commandline)
