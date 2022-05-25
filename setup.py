@@ -21,9 +21,9 @@ setup(
         'screed~=1.0.5',
         'sourmash~=4.2.2',
         'pandas~=1.1.5',
-        'setuptools~=47.1.1',
         'biopython~=1.78',
         'scipy~=1.7.3',
-        'python-dotenv'
-    ],
+        'python-dotenv',
+        'setuptools'
+    ]
 )
