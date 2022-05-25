@@ -27,7 +27,7 @@ Ngstool is needed to build mashpit database on Raspberry Pi:
 
 ## Dependencies
 
-- Python >= 3.7
+- Python >= 3.8
 - Sratoolkit 2.10.8
 
 ## Mashpit Database
