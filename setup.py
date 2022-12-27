@@ -24,6 +24,6 @@ setup(
         'biopython~=1.78',
         'scipy~=1.7.3',
         'python-dotenv',
-        'setuptools==60.0.1'
+        'setuptools==65.5.1'
     ]
 )
