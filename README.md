@@ -64,7 +64,7 @@ optional arguments:
 ```
 - Example command
 ```
-mashpit build standard salmonella -s Salmonella
+mashpit build taxon salmonella -s Salmonella
 ```
 
 Note: Supported species names can be found in this [list](https://ftp.ncbi.nlm.nih.gov/pathogen/Results/)
