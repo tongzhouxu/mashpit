@@ -3,14 +3,11 @@ python:
   - "3.8"
   - "3.9"
 before_install:
-  - wget https://ftp-trace.ncbi.nlm.nih.gov/sra/sdk/2.10.8/sratoolkit.2.10.8-centos_linux64.tar.gz -O /tmp/sratoolkit.tar.gz
-  - tar -xvf /tmp/sratoolkit.tar.gz
-  - export PATH=$PATH:$PWD/sratoolkit.2.10.8-centos_linux64/bin
+  - curl -o datasets 'https://ftp.ncbi.nlm.nih.gov/pub/datasets/command-line/v2/linux-amd64/datasets'
+  - chmod +x datasets
+  - export PATH=$PATH:$PWD
 install:
-  - python setup.py install
+  - pip install .
 script:
   - cd $PWD/mashpit/test
-  - python test_build.py
-  - python test_config.py
-  - python test_sketch.py
-  - python test_query.py
+  - python test.py

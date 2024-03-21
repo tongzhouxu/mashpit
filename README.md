@@ -1,34 +1,31 @@
-[![Build Status](https://www.travis-ci.com/tongzhouxu/mashpit.svg?branch=master)](https://www.travis-ci.com/tongzhouxu/mashpit)
+[![Build Status](https://app.travis-ci.com/tongzhouxu/mashpit.svg?branch=master)](https://app.travis-ci.com/tongzhouxu/mashpit)
 [![PyPI release](https://img.shields.io/pypi/v/mashpit)](https://pypi.python.org/pypi/mashpit/)
 # Mashpit
 Create a database of mash signatures and find the most similar genomes to a target sample 
 
+## Dependencies
+
+- Python >= 3.8
+- NCBI datasets
+
 ## Installation
-Install sratoolkit for Linux
+Install NCBI datasets
 ```
-wget https://ftp-trace.ncbi.nlm.nih.gov/sra/sdk/2.10.8/sratoolkit.2.10.8-centos_linux64.tar.gz -O /tmp/sratoolkit.tar.gz
-tar -xvf /tmp/sratoolkit.tar.gz
-export PATH=$PATH:$PWD/sratoolkit.2.10.8-centos_linux64/bin
+curl -o datasets 'https://ftp.ncbi.nlm.nih.gov/pub/datasets/command-line/v2/linux-amd64/datasets'
+chmod +x datasets
+export PATH=$PATH:$PWD
 ```
 
 Install mashpit using pip:
   ```
   pip install mashpit
   ```
-Or manually install after git clone:
+Or git clone from github:
   ```
   git clone https://github.com/tongzhouxu/mashpit.git
-  python setup.py install 
+  cd mashpit
+  pip install . 
   ```
-Ngstool is needed to build mashpit database on Raspberry Pi:
-1. Build and install ngs. Follow instructions at [https://github.com/ncbi/ngs/wiki/Building-and-Installing-from-Source](https://github.com/ncbi/ngs/wiki/Building-and-Installing-from-Source)
-2. Install ncbi-vdb. Follow instructions at [https://github.com/ncbi/ncbi-vdb/wiki/Building-and-Installing-from-Source](https://github.com/ncbi/ncbi-vdb/wiki/Building-and-Installing-from-Source)
-3. Build and install ngstools from source. Follow instructions at [https://github.com/ncbi/ngs-tools](https://github.com/ncbi/ngs-tools)
-
-## Dependencies
-
-- Python >= 3.8
-- Sratoolkit 2.10.8
 
 ## Mashpit Database
 
@@ -36,94 +33,76 @@ A mashpit database is a directory containing:
 - `$DB_NAME.db`
 - `$DB_NAME.sig`
 
-Two types of Mashpit database:
+Mashpit database can be built using:
 
-1. Standard Database (Pathogen Detection Database)
-
+1. A taxonomic name 
    A standard database is a collection of representative genomes from each cluster on [Pathogen Detection](https://www.ncbi.nlm.nih.gov/pathogens). By default mashpit will download the latest version of a specified species and find the centroid of each SNP cluter (SNP tree).
-2. Custom Database  
-   
-   A custom database is a collection of genomes based on a proveded biosample accesion list or a keyword.
+2. BioSample accessions  
+   A custom database is a collection of genomes based on a proveded biosample accesion list.
 
 ## Usage
 
-### 0. Set up Entrez email and API key (For custom database only)
+### 1. Build a mashpit database
 ```
-usage: mashpit config [-h] [-k KEY] email
-
-Add Entrez email and key to environment variables
+usage: mashpit build [-h] [--quiet] [--number NUMBER] [--ksize KSIZE] [--species SPECIES] [--email EMAIL] [--key KEY] [--pd_version PD_VERSION] [--list LIST] {taxon,accession} name
 
 positional arguments:
-  email              Entrez email address
-
-optional arguments:
-  -h, --help         show this help message and exit
-  -k KEY, --key KEY  Entrez api key
-```
-- Example command
-```
-mashpit config example@example.com -k your_password
-```
-More information about Entrez API key can be found on [this page.](https://ncbiinsights.ncbi.nlm.nih.gov/2017/11/02/new-api-keys-for-the-e-utilities/)
-### 1. Build the database
-```
-usage: mashpit build [-h] [-s SPECIES] [-l LIST] [-t TERM]
-                     {standard,biosample_list,keyword} name
-
-Build mashpit database
-
-positional arguments:
-  {standard,biosample_list,keyword}
-                        Database type: standard or custom
-  name                  Mashpit database name
+  {taxon,accession}     mashpit database type.
+  name                  mashpit database name
 
 optional arguments:
   -h, --help            show this help message and exit
-  -s SPECIES, --species SPECIES
-                        Query keyword
-  -l LIST, --list LIST  File containing a list of biosample accessions
-  -t TERM, --term TERM  Query keyword
+  --quiet               disable logs
+  --number NUMBER       maximum number of hashes for sourmash, default is 1000
+  --ksize KSIZE         kmer size for sourmash, default is 31
+  --species SPECIES     species name
+  --email EMAIL         Entrez email
+  --key KEY             Entrez api key
+  --pd_version PD_VERSION
+                        a specified Pathogen Detection version (PDG accession). Default is the latest.
+  --list LIST           Path to a list of NCBI BioSample accessions
 ```
 - Example command
 ```
 mashpit build standard salmonella -s Salmonella
 ```
-```
-mashpit build biosample_list db_name -l file.list
-```
-```
-mashpit build keyword db_name -t salmonella_enteritidis
-```
-### 2. Sketch the genomes
-```
-usage: mashpit sketch [-h] name
 
-Build sketches for the records in the database
+Note: Supported species names can be found in this [list](https://ftp.ncbi.nlm.nih.gov/pathogen/Results/)
+
+### 2. Query against a mashpit database
+```
+usage: mashpit query [-h] [--number NUMBER] [--threshold THRESHOLD] [--annotation ANNOTATION] sample database
 
 positional arguments:
-  name        Mashpit database name
-
-optional arguments:
-  -h, --help  show this help message and exit
-```
-- Example command
-```
-mashpit sketch db_name
-```
-### 3. Run a query
-```
-usage: mashpit query [-h] [-n NUMBER] sample database
-
-Find the most similar assemblies to the target sample
-
-positional arguments:
-  sample                file name of the query sample
-  database              name of the database
+  sample                path to query sample
+  database              path to the database folder
 
 optional arguments:
   -h, --help            show this help message and exit
+  --number NUMBER       number of isolates in the query output, default is 200
+  --threshold THRESHOLD
+                        minimum jaccard similarity for mashtree, default is 0.85
+  --annotation ANNOTATION
+                        mashtree tip annoatation, default is none
 ```
 - Example command
 ```
-mashpit query sample.fasta db_name
+mashpit query sample.fasta path/to/database
+```
+### Optional: Update the database
+```
+usage: mashpit update [-h] [--metadata METADATA] [--quiet] database name
+
+positional arguments:
+  database             path for the database folder
+  name                 database name
+
+optional arguments:
+  -h, --help           show this help message and exit
+  --metadata METADATA  metadata file in csv format
+  --quiet              disable logs
+  ```
+- Example command
+```
+mashpit update path/to/database salmonella
 ```

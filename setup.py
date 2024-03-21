@@ -7,7 +7,7 @@ with open("README.md", "r") as rm:
 
 setup(
     name='mashpit',
-    version='0.9.2',
+    version='0.9.3',
     url='https://github.com/tongzhouxu/mashpit',
     author='Tongzhou Xu',
     author_email='tongzhou.xu@uga.edu',
@@ -15,15 +15,19 @@ setup(
     long_description=long_description,
     long_description_content_type="text/markdown",
     packages=['mashpit'],
+    include_package_data=True,
     entry_points={'console_scripts':['mashpit=mashpit.mashpit:main']},
     install_requires=[
-        'numpy~=1.19.5',
-        'screed~=1.0.5',
-        'sourmash~=4.2.2',
-        'pandas~=1.1.5',
-        'biopython~=1.78',
-        'scipy~=1.7.3',
+        'sourmash~=4.6.1',
+        'ncbi-datasets-pylib~=14.6.2',
+        'pandas',
+        'biopython',
+        'ete3',
+        'PyQt5',
+        'scikit-bio',
         'python-dotenv',
-        'setuptools==60.0.1'
+        'tqdm',
+        'flask',
+        'dask',
     ]
 )

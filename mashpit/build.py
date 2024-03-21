@@ -1,37 +1,33 @@
 #!/usr/bin/env python3
-
 import os
+import time
+import glob
+import csv
+import itertools
+import zipfile
+import screed
+import shutil
+import logging
 import sqlite3
+import requests
 import subprocess
+
 import urllib.request
-
-import xml.etree.ElementTree as ET
+import dask.dataframe as dd
 import pandas as pd
-import numpy as np
+import xml.etree.ElementTree as ET
 
-from sqlite3 import Error
+from tqdm import tqdm
 from Bio import Entrez
-from dotenv import load_dotenv
 from html.parser import HTMLParser
+from sourmash import SourmashSignature, save_signatures, load_one_signature, MinHash
+from ncbi.datasets.openapi import ApiClient as DatasetsApiClient
+from ncbi.datasets import GenomeApi as DatasetsGenomeApi
 
-# connection to sqlite db file
-def create_connection(db_file):
-    conn = None
-    try:
-        conn = sqlite3.connect(db_file, check_same_thread=False)
-        return conn
-    except Error as e:
-        print(e)
-
+# create connection to sqlite db file
+def create_connection(sql_path):
+    conn = sqlite3.connect(sql_path)
     return conn
-
-# create table in sqlite db
-def create_table(conn, create_table_sql):
-    try:
-        c = conn.cursor()
-        c.execute(create_table_sql)
-    except Error as e:
-        print(e)
 
 # create sqlite3 database with the tables
 def create_database(conn):
@@ -54,7 +50,8 @@ def create_database(conn):
                               outbreak         TEXT,
                               srr              TEXT,
                               PDT_acc          TEXT,
-                              PDS_acc          TEXT
+                              PDS_acc          TEXT,
+                              asm_acc          TEXT
                         );"""
     # a description table to keep a record of the dabtabase type, (species and PD version if it is a standard database)
     description_table = """CREATE TABLE IF NOT EXISTS DESC (
@@ -62,8 +59,9 @@ def create_database(conn):
                               value            TEXT
                         );"""
     # create tables
-    create_table(conn, metadata_table)
-    create_table(conn, description_table)
+    c = conn.cursor()
+    c.execute(metadata_table)
+    c.execute(description_table)
     conn.commit()
 
 class PDGParser(HTMLParser):
@@ -72,75 +70,303 @@ class PDGParser(HTMLParser):
         if str(data).endswith('tsv'):
             self.list.append(data)
 
-def download_from_PD(pathogen_name):
-    response = urllib.request.urlopen('https://ftp.ncbi.nlm.nih.gov/pathogen/Results/'+pathogen_name+'/latest_snps/Metadata/')
+class Species_Name_Parser(HTMLParser):
+    list = []
+    def handle_data(self, data):
+        if str(data).endswith('/'):
+            self.list.append(data.strip('/'))
+
+class DownloadProgressBar(tqdm):
+    def update_to(self, b=1, bsize=1, tsize=None):
+        if tsize is not None:
+            self.total = tsize
+        self.update(b * bsize - self.n)
+
+def download_url(url, output_path):
+    with DownloadProgressBar(unit='B', unit_scale=True,
+                             miniters=1, unit_divisor=1024,desc=url.split('/')[-1],leave=False) as t:
+        urllib.request.urlretrieve(url, filename=output_path, reporthook=t.update_to)
+
+def download_metadata(pathogen_name,pd_version,tmp_folder):
+    logging.info('Downloading metadata files...')
+    time_start_download = time.time()
+    # get the metadata and SNP distance files
+    if pd_version is not None:
+        r = requests.get(f'https://ftp.ncbi.nlm.nih.gov/pathogen/Results/{pathogen_name}/{pd_version}/Metadata/')
+        if r.status_code == 404:
+            logging.error('invalid PDG accession')
+            exit(0)
+        elif r.status_code == 200:
+            url_metadata_folder = f'https://ftp.ncbi.nlm.nih.gov/pathogen/Results/{pathogen_name}/{pd_version}/Metadata/'
+    else:
+        url_metadata_folder = f'https://ftp.ncbi.nlm.nih.gov/pathogen/Results/{pathogen_name}/latest_snps/Metadata/'
+    response = urllib.request.urlopen(url_metadata_folder)
     metadata_html = response.read().decode('utf-8')
     parser = PDGParser()
     parser.feed(metadata_html)
-    metadata_file = parser.list[0]
-    pdg_acc = metadata_file.strip('.metadata.tsv')
+    metadata_file_name = parser.list[0]
+    pdg_acc = metadata_file_name.strip('.metadata.tsv')
+    distance_file = f'{pdg_acc}.reference_target.SNP_distances.tsv'
+    isolate_pds_file = f'{pdg_acc}.reference_target.all_isolates.tsv'
     parser.close()
-    # TODO: progress bar for downloading the files
-    urllib.request.urlretrieve('https://ftp.ncbi.nlm.nih.gov/pathogen/Results/'+pathogen_name+'/latest_snps/Metadata/'+metadata_file,metadata_file)
-    urllib.request.urlretrieve('https://ftp.ncbi.nlm.nih.gov/pathogen/Results/'+pathogen_name+'/latest_snps/Clusters/'+pdg_acc+'.reference_target.SNP_distances.tsv',pdg_acc+'.reference_target.SNP_distances.tsv')
+    url_metadata = url_metadata_folder+metadata_file_name
+    if pd_version is not None:
+        url_snp_distances = f'https://ftp.ncbi.nlm.nih.gov/pathogen/Results/{pathogen_name}/{pd_version}/Clusters/{distance_file}'
+        url_isolate_pds = f'https://ftp.ncbi.nlm.nih.gov/pathogen/Results/{pathogen_name}/{pd_version}/Clusters/{isolate_pds_file}'
+    else:
+        url_snp_distances = f'https://ftp.ncbi.nlm.nih.gov/pathogen/Results/{pathogen_name}/latest_snps/Clusters/{distance_file}'
+        url_isolate_pds = f'https://ftp.ncbi.nlm.nih.gov/pathogen/Results/{pathogen_name}/latest_snps/Clusters/{isolate_pds_file}'
+    # check if the metadata file exists
+    if not os.path.isfile(os.path.join(tmp_folder,metadata_file_name)):
+        logging.info(f'Downloading metadata file from {url_metadata_folder}')
+        download_url(url_metadata,os.path.join(tmp_folder,metadata_file_name))
+    else:
+        logging.info(f'Using existing metadata file {metadata_file_name}')
+    # check if the SNP distance file exists
+    if not os.path.isfile(os.path.join(tmp_folder,distance_file)):
+        logging.info(f'Downloading pairwise SNP distance file from {url_snp_distances}')
+        download_url(url_snp_distances,os.path.join(tmp_folder,distance_file))
+    else:
+        logging.info(f'Using existing pairwise SNP distance file {distance_file}')
+    # check if the isolate PDS acc file exists
+    if not os.path.isfile(os.path.join(tmp_folder,isolate_pds_file)):
+        logging.info(f'Downloading isolates_PDS_acc file from {url_isolate_pds}')
+        download_url(url_isolate_pds,os.path.join(tmp_folder,isolate_pds_file))
+    else:
+        logging.info(f'Using existing isolates_PDS_acc file {isolate_pds_file}')
     
+    time_end_download = time.time()
+    logging.info(f'Downloaded metadata and distance files in {round(time_end_download-time_start_download,2)} seconds.')
     # return the metadata file name
-    return metadata_file
+    return metadata_file_name, isolate_pds_file
 
-def calculate_centroid(df_raw,pdg_acc,skesa_path):
-    # Calculate the centroid for each cluster
-    subprocess.run('cat '+pdg_acc+'.reference_target.SNP_distances.tsv | cut -f1,5,9,12 > '+pdg_acc+'_selected_distance.tsv',shell=True,check=True)
-    distance_file = pdg_acc+'_selected_distance.tsv'
-    df_distance = pd.read_csv(distance_file,header=0,sep='\t')
-    cluster_list = df_distance.groupby('PDS_acc').size().index.tolist()
-    cluster_center_dict = {'PDS_acc':[],'target_acc':[]}
+def calculate_centroid(df_metadata,pdg_acc,tmp_folder):
+    logging.info('Calculating centroid...')
+    time_start_calculate_centroid = time.time()
+    # drop columns to reduce memory usage
+    input_file_name = f'{pdg_acc}.reference_target.SNP_distances.tsv'
+    output_file_name = f'{pdg_acc}_distance.tsv'
+    input_file = os.path.join(tmp_folder,input_file_name)
+    output_file = os.path.join(tmp_folder,output_file_name)
+    columns_to_select = [0, 4, 8, 11]
+
+    with open(input_file, 'r') as f_in, \
+        open(output_file, 'w') as f_out:
+        reader = csv.reader(f_in, delimiter='\t')
+        writer = csv.writer(f_out, delimiter='\t')
+        for row in reader:
+            selected_cols = [row[i] for i in columns_to_select]
+            writer.writerow(selected_cols)
+
+    # filter out isolates without asm_acc
+    target_columns = ["target_acc_1", "target_acc_2"]
+    distance_filtered_name = f'{pdg_acc}_filtered_distance.tsv'
+    distance_filtered = os.path.join(tmp_folder,distance_filtered_name)
+    # Use the csv module to open the TSV file and create a reader object
+    with open(output_file, "r") as distance_file, \
+        open(distance_filtered, "w") as filtered_distance_file:
+
+        reader = csv.reader(distance_file, delimiter="\t")
+        writer = csv.writer(filtered_distance_file, delimiter="\t")
+
+        # Extract the header row from the reader object and write it to the new file
+        header = next(reader)
+        writer.writerow(header)
+
+        # Find the indices of the target columns in the header row
+        target_column_indices = [header.index(column) for column in target_columns]
+
+        # Iterate over each row in the reader object and write it to the new file if it contains the target columns
+        target_values = set(df_metadata['target_acc'])
+        for row in reader:
+            if all(row[index] in target_values for index in target_column_indices):
+                writer.writerow(row)
+
+    # Define the column to group by
+    group_by_column = 'PDS_acc'
+    # two lists to be added into the database
+    cluster_list_db = []
+    centroid_list_db = []
+    # Open the TSV file using the csv module and read it line by line
+    with open(distance_filtered, 'r') as file:
+        reader = csv.reader(file, delimiter='\t')
+        header = next(reader)  # read the header row
+
+        # Define a generator expression that yields each row from the file
+        rows = (row for row in reader)
+
+        # Use itertools.groupby() to group the rows by the specified column
+        for group_value, group_rows in itertools.groupby(rows, lambda x: x[header.index(group_by_column)]):
+            # Process the rows for the current group
+            cluster_list_db.append(group_value)
+            all_rows = list(group_rows)
+            col1 = [row[0] for row in all_rows]
+            col2 = [row[1] for row in all_rows]
+            col3 = [row[3] for row in all_rows]
+            df_cluster = pd.DataFrame({'target_acc_1':col1,'target_acc_2':col2,'delta_positions_unambiguous':col3})
+            df_cluster = pd.concat([df_cluster,df_cluster.rename(columns={"target_acc_1":"target_acc_2","target_acc_2":"target_acc_1"})])
+            df_cluster['delta_positions_unambiguous'] = df_cluster['delta_positions_unambiguous'].astype('float')
+            df_dask = dd.from_pandas(df_cluster, npartitions=4)  # Convert the pandas dataframe to a Dask dataframe with 4 partitions
+            centroid_target_acc = df_dask.groupby('target_acc_1')['delta_positions_unambiguous'].sum().compute().idxmin()
+            centroid_list_db.append(centroid_target_acc)
+
+    df_cluster_center = pd.DataFrame({'PDS_acc':cluster_list_db,'target_acc':centroid_list_db})
+    df_cluster_center.to_csv(os.path.join(tmp_folder,f'{pdg_acc}_cluster_center.tsv'),sep='\t',index=False)
+    time_end_calculate_centroid = time.time()
+    logging.info(f'Calculated centroid in {round(time_end_calculate_centroid-time_start_calculate_centroid,2)} seconds.')
+    logging.info(f'Number of clusters: {len(cluster_list_db)}')
+
+def download_and_sketch_assembly(gca_acc_list,hash_number,kmer_size,tmp_folder):
+    logging.info('Downloading and sketching assemblies...')
+    time_start_download_and_sketch_assembly = time.time()
+    with DatasetsApiClient() as api_client:
+        api_instance = DatasetsGenomeApi(api_client)
+        if len(gca_acc_list) <= 400:
+                api_response = api_instance.download_assembly_package(
+                    gca_acc_list,
+                    _preload_content=False,
+                    hydrated='DATA_REPORT_ONLY',
+                    _request_timeout=600,
+                    _return_http_data_only=True
+                )
+                zip_file = os.path.join(tmp_folder,'assembly.zip')
+                with open(zip_file, 'wb') as f:
+                    f.write(api_response.data)
+                    api_response.close()
+                api_client.close()
+                with zipfile.ZipFile(zip_file, 'r') as zip_ref:
+                    zip_ref.extractall(os.path.join(tmp_folder,'assembly'))
+                # try to rehydrate the dataset, if failed, try again after 5 seconds
+                while True:
+                    try:
+                        subprocess.run(['datasets', 'rehydrate', '--directory', os.path.join(tmp_folder,'assembly')],
+                                       check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                        break
+                    except subprocess.CalledProcessError:
+                        time.sleep(5)
+                        logging.error(f'Failed to rehydrate {tmp_folder}/assembly. Trying again...')    
+        else:
+            # divide the list into chunks if the list is too long for HTTP request
+            chunk_list = [gca_acc_list[i:i+400] for i in range(0, len(gca_acc_list), 400)]
+            j = 0
+            for sublist in chunk_list:
+                api_response = api_instance.download_assembly_package(
+                    sublist,
+                    _preload_content=False,
+                    hydrated='DATA_REPORT_ONLY',
+                    _request_timeout=600,
+                    _return_http_data_only=True
+                )
+                zip_file = os.path.join(tmp_folder,'assembly_'+str(j)+'.zip')
+                with open(zip_file, 'wb') as f:
+                    f.write(api_response.data)
+                    api_response.close()
+                j = j+1
+            api_client.close()
+            # get a list of all zip files in tmp folder
+            file_list = glob.glob(os.path.join(tmp_folder,'assembly_' + '*'))
+            os.makedirs(os.path.join(tmp_folder,'assembly','ncbi_dataset','data'))
+            for file in file_list:
+                with zipfile.ZipFile(file, 'r') as zip_ref:
+                    folder_name = file.replace('.zip','')
+                    zip_ref.extractall(os.path.join(tmp_folder,folder_name))
+                    # try to rehydrate the dataset, if failed, try again after 5 seconds
+                    while True:
+                        try:
+                            subprocess.run(['datasets', 'rehydrate', '--directory', os.path.join(tmp_folder,folder_name)],
+                                           check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                            break
+                        except subprocess.CalledProcessError:
+                            time.sleep(5)
+                            logging.error(f'Failed to rehydrate {folder_name}. Trying again...')
+                    source_folder = os.path.join(tmp_folder,folder_name,'ncbi_dataset','data','GCA_*')
+                    destination_folder = os.path.join(tmp_folder,'assembly','ncbi_dataset','data')
+                    files_to_move = glob.glob(source_folder)
+                    for f in files_to_move:
+                        shutil.move(f, destination_folder) 
+    time_end_download = time.time()
+    logging.info(f'Downloaded {len(gca_acc_list)} assemblies in {round(time_end_download-time_start_download_and_sketch_assembly,2)} seconds.')
+    os.mkdir(os.path.join(tmp_folder,'signature'))
+    for acc in gca_acc_list:
+        # TODO: other file name patterns?
+        fna_file_list = glob.glob(os.path.join(tmp_folder,'assembly','ncbi_dataset','data',acc,'*_genomic.fna'))
+        # skip if there are more than one fna files or no fasta file
+        if len(fna_file_list)!= 1:
+            continue
+        mh = MinHash(n=hash_number,ksize=kmer_size)
+        with screed.open(fna_file_list[0], 'r') as f:
+            for record in f:
+                mh.add_sequence(record.sequence, True)
+        signame = acc
+        sig = [SourmashSignature(mh, name=signame)]
+        with open(os.path.join(tmp_folder,'signature',acc+'.sig'),'w') as f:
+            save_signatures(sig,fp=f)
+    time_end_sketch = time.time()
+    logging.info(f'Sketched {len(gca_acc_list)} assemblies in {round(time_end_sketch-time_end_download,2)} seconds.')
+
+def merge_sig(args,db_folder,tmp_folder):
+    logging.info('Merging all signature files...')
+    time_start_merge_sig = time.time()
+    all_sig_path = os.path.join(tmp_folder,'signature',"*.sig")
+    sig_path_list = glob.glob(all_sig_path)
+    siglist = []
+    for sig_path in sig_path_list:
+        siglist.append(load_one_signature(sig_path))
+    sig_file_name = os.path.join(db_folder,args.name+'.sig')
+    with open(sig_file_name,'w') as f:
+        save_signatures(siglist,fp=f)
+    time_end_merge_sig = time.time()
+    logging.info(f'Merged all signature files in {round(time_end_merge_sig-time_start_merge_sig,2)} seconds.')
+        
+# import metadata to database directly from pathogen detection metadata dataframe
+def import_metadata(df_metadata,df_cluster_center_metadata,conn):
+    info = {'biosample_acc': None,
+            'taxid': None,
+            'strain': None,
+            'collected_by': None,
+            'collection_date': None,
+            'geo_loc_name': None,
+            'isolation_source': None,
+            'lat_lon': None,
+            'serovar': None,
+            'sub_species': None,
+            'species': None,
+            'genus': None,
+            'host': None,
+            'host_disease': None,
+            'outbreak': None,
+            'srr':None,
+            'PDT_acc':None,
+            'PDS_acc':None,
+            'asm_acc':None,}
+
+    for index, row in df_cluster_center_metadata.iterrows():
+        info['biosample_acc'] = row['biosample_acc']
+        info['taxid'] = row['taxid']
+        info['strain'] = row['strain']
+        info['collected_by'] = row['collected_by']
+        info['collection_date'] = row['collection_date']
+        info['geo_loc_name'] = row['geo_loc_name']
+        info['isolation_source'] = row['isolation_source']
+        info['lat_lon'] = row['lat_lon']
+        info['serovar'] = row['serovar']
+        info['host'] = row['host']
+        info['host_disease'] = row['host_disease']
+        info['outbreak'] = ','.join(list(df_metadata[df_metadata['PDS_acc']==row['PDS_acc']].dropna(subset=['outbreak']).outbreak.unique()))
+        info['srr'] = row['Run']
+        info['PDT_acc'] = row['target_acc']
+        info['PDS_acc'] = row['PDS_acc']
+        info['asm_acc'] = row['asm_acc']
+        # check whether the information is missing
+        for key in info:
+            if info[key] is None:
+                info[key] = 'missing'
+
+        info_list = list(info.values())
  
-    for cluster in cluster_list:
-        # get all isolates in this cluster
-        df_cluster =  df_distance.loc[df_distance['PDS_acc'] == cluster]
-        # append the dataset with switched columns to get a "full" pairwise distance matrix
-        df_append = df_cluster.append(df_cluster.rename(columns={"target_acc_1":"target_acc_2","target_acc_2":"target_acc_1"}))
-        # add up all distances for one target and try downloading the skesa assembly for the one with minimum distances
-        for target in df_append.groupby('target_acc_1')['delta_positions_unambiguous'].sum().sort_values().index.tolist():
-            SRR =  str(df_raw.loc[df_raw['target_acc'] == target]['Run'].iloc[0])
-            if SRR == np.nan:
-                continue
-            else:
-                try:
-                    # try downloading the skesa assembly, if failed turn to next genome in this cluster
-                    subprocess.check_call(
-                    "dump-ref-fasta http://sra-download.ncbi.nlm.nih.gov/srapub_files/" + SRR + "_" + SRR + ".realign > "+os.path.join(skesa_path,SRR + "_skesa.fasta"), shell=True, stderr=subprocess.DEVNULL)
-                except subprocess.CalledProcessError:
-                    continue
-                else:
-                    cluster_center_dict['PDS_acc'].append(cluster)
-                    cluster_center_dict['target_acc'].append(target)
-                    break
-    # delete all the empty fasta files
-    os.system('find . -size 0 -delete')
-    df_cluster_center = pd.DataFrame.from_dict(cluster_center_dict)
-    df_cluster_center.to_csv(pdg_acc+'_PDS_center.csv')
-
-    return df_cluster_center
-
-# build a standard database based on a Pathogen Detection metadata file
-def build_standard(args,conn,skesa_path):
-    # download the latest PD metadata files and get the metadata file name
-    pathogen_name = args.species
-    metadata_file = download_from_PD(pathogen_name)
-    
-    df_raw = pd.read_csv(metadata_file,header=0,sep='\t')
-    pdg_acc = metadata_file.strip('.metadata.tsv')
-    # Calculate the centroid for each cluster
-    df_cluster_center = calculate_centroid(df_raw,pdg_acc,skesa_path)
-    df_cluster_center_metadata = df_cluster_center['target_acc'].to_frame().join(df_raw.set_index('target_acc'),on='target_acc')
-    import_metadata(df_cluster_center_metadata,conn)
-    c = conn.cursor()
-    c.execute("INSERT INTO DESC VALUES ('Type','Standard');")
-    c.execute("INSERT INTO DESC VALUES ('Species',"+args.species+");")
-    c.execute("INSERT INTO DESC VALUES ('Version',"+pdg_acc+");")
-    conn.commit()
-
+        with conn:
+            insert_metadata(conn, info_list)
+    return
 
 def insert_metadata(conn, info):
     sql = '''INSERT OR IGNORE INTO METADATA(
@@ -161,229 +387,217 @@ def insert_metadata(conn, info):
              outbreak,
              srr,
              PDT_acc,
-             PDS_acc) 
-             VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) '''
+             PDS_acc,
+             asm_acc) 
+             VALUES(:biosample_acc, :taxid, :strain, :collected_by, :collection_date,
+                    :geo_loc_name, :isolation_source, :lat_lon, :serovar, :sub_species,
+                    :species, :genus, :host, :host_disease, :outbreak, :srr,
+                    :PDT_acc, :PDS_acc, :asm_acc);'''
     c = conn.cursor()
     c.execute(sql, info)
-# get metadata from NCBI according to the biosample record id and the download the skesa assembly
-def build_biosample_id(id, conn, skesa_path):
-    # get the xml formatted information for the biosample
-    handle_link_sra = Entrez.elink(db='sra', dbfrom='biosample', id=id)
-    record_link_sra = Entrez.read(handle_link_sra)
-    try:
-        handle_fetch_sra = Entrez.efetch(db='sra', id=record_link_sra[0]['LinkSetDb'][0]['Link'][0]['Id'])
-    except IndexError:
-        raise Exception
 
-    # get the xml formatted sra result
-    xml_result_sra = handle_fetch_sra.read()
-    root_sra = ET.fromstring(xml_result_sra)
-    # check the sequencing library layout and source
-    lib_layout = root_sra.find('EXPERIMENT_PACKAGE').find('EXPERIMENT').find('DESIGN').find('LIBRARY_DESCRIPTOR').find(
-        'LIBRARY_LAYOUT')[0].tag
-    lib_source = root_sra.find('EXPERIMENT_PACKAGE').find('EXPERIMENT').find('DESIGN').find('LIBRARY_DESCRIPTOR').find(
-        'LIBRARY_SOURCE').text
-    if lib_source != 'GENOMIC':
-        raise Exception
-    elif lib_layout != 'PAIRED':
-        raise Exception
-    info = {'biosample_acc': None,
-            'taxid': None,
-            'strain': None,
-            'collected_by': None,
-            'collection_date': None,
-            'geo_loc_name': None,
-            'isolation_source': None,
-            'lat_lon': None,
-            'serovar': None,
-            'sub_species': None,
-            'species': None,
-            'genus': None,
-            'host': None,
-            'host_disease': None,
-            'outbreak': None,
-            'srr':None,
-            'PDT_acc':None,
-            'PDS_acc':None}
-
-    taxid = root_sra.find('EXPERIMENT_PACKAGE').find('SAMPLE').find('SAMPLE_NAME').find('TAXON_ID').text
-    info['taxid'] = taxid
-    srr = root_sra.find('EXPERIMENT_PACKAGE').find('RUN_SET').find('RUN')
-    info['srr'] = srr.attrib['accession']
-
-    attributes = root_sra.find('EXPERIMENT_PACKAGE').find('SAMPLE').find('SAMPLE_ATTRIBUTES')
-    for item in attributes:
-        if item.find('TAG').text == 'strain':
-            info['strain'] = item.find('VALUE').text
-        elif item.find('TAG').text == 'collected_by':
-            info['collected_by'] = item.find('VALUE').text
-        elif item.find('TAG').text == 'collection_date':
-            info['collection_date'] = item.find('VALUE').text
-        elif item.find('TAG').text == 'geo_loc_name':
-            info['geo_loc_name'] = item.find('VALUE').text
-        elif item.find('TAG').text == 'isolation_source':
-            info['isolation_source'] = item.find('VALUE').text
-        elif item.find('TAG').text == 'lat_lon':
-            info['lat_lon'] = item.find('VALUE').text
-        elif item.find('TAG').text == 'serovar':
-            info['serovar'] = item.find('VALUE').text
-        elif item.find('TAG').text == 'sub_species':
-            info['sub_species'] = item.find('VALUE').text
-        elif item.find('TAG').text == 'species':
-            info['species'] = item.find('VALUE').text
-        elif item.find('TAG').text == 'genus':
-            info['genus'] = item.find('VALUE').text
-        elif item.find('TAG').text == 'host':
-            info['host'] = item.find('VALUE').text
-        elif item.find('TAG').text == 'host_disease':
-            info['host_disease'] = item.find('VALUE').text
-        elif item.find('TAG').text == 'outbreak':
-            info['outbreak'] = item.find('VALUE').text
-
-    handle_fetch_biosample = Entrez.efetch(db='biosample', id=id)
-    xml_result_biosample = handle_fetch_biosample.read()
-    root_biosample = ET.fromstring(xml_result_biosample)
-    acc = root_biosample.find('BioSample')
-    info['biosample_acc'] = acc.attrib['accession']
-    # check whether the information is missing
-    for key in info:
-        if info[key] is None:
-            info[key] = 'missing'
-
-    info_list = list(info.values())
-    with conn:
-        insert_metadata(conn, info_list)
+def prepare(args):
+    # check if datasets is installed
+    if not shutil.which('datasets'):
+        logging.error('NCBI datasets is not installed. Please install it from https://www.ncbi.nlm.nih.gov/datasets/docs/v2/download-and-install/')
+        exit(1)
+    t = time.localtime()
+    current_time = time.strftime("%Y%m%d%H%M%S", t)
+    print_handler = logging.StreamHandler()
+    file_handler = logging.FileHandler(f"mashpit-{current_time}.log")
+    print_handler.setLevel(logging.INFO)
+    file_handler.setLevel(logging.DEBUG)
+    if args.quiet:
+        print_handler.setLevel(logging.ERROR)
+    logging.basicConfig(format='%(asctime)s [%(levelname)s] %(message)s', 
+                        level=logging.DEBUG,
+                        datefmt='%d-%b-%y %H:%M:%S', 
+                        handlers=[print_handler,file_handler])
     
-    SRR = info['srr']
-    if SRR == 'missing':
-        # TODO: keep a log of isolates without SRR accessions
-        return
-    try:
-        subprocess.check_call(
-                    "dump-ref-fasta http://sra-download.ncbi.nlm.nih.gov/srapub_files/" + SRR + "_" + SRR + ".realign > "+os.path.join(skesa_path,SRR + "_skesa.fasta"), shell=True, stderr=subprocess.DEVNULL)
-    except subprocess.CalledProcessError:
-        return
-# import metadata to database directly from pathogen detection metadata dataframe
-def import_metadata(metadata_df,conn):
-    info = {'biosample_acc': None,
-            'taxid': None,
-            'strain': None,
-            'collected_by': None,
-            'collection_date': None,
-            'geo_loc_name': None,
-            'isolation_source': None,
-            'lat_lon': None,
-            'serovar': None,
-            'sub_species': None,
-            'species': None,
-            'genus': None,
-            'host': None,
-            'host_disease': None,
-            'outbreak': None,
-            'srr':None,
-            'PDT_acc':None,
-            'PDS_acc':None,}
-
-    for index, row in metadata_df.iterrows():
-        info['biosample_acc'] = row['biosample_acc']
-        info['taxid'] = row['taxid']
-        info['strain'] = row['strain']
-        info['collected_by'] = row['collected_by']
-        info['collection_date'] = row['collection_date']
-        info['geo_loc_name'] = row['geo_loc_name']
-        info['isolation_source'] = row['isolation_source']
-        info['lat_lon'] = row['lat_lon']
-        info['serovar'] = row['serovar']
-        info['host'] = row['host']
-        info['host_disease'] = row['host_disease']
-        info['outbreak'] = row['outbreak']
-        info['srr'] = row['Run']
-        info['PDT_acc'] = row['target_acc']
-        info['PDS_acc'] = row['PDS_acc']
-        # check whether the information is missing
-        for key in info:
-            if info[key] is None:
-                info[key] = 'missing'
-
-        info_list = list(info.values())
- 
-        with conn:
-            insert_metadata(conn, info_list)
-
-    return
-
-
-def build(args):
-    #TODO: allow a custom directory in addition to default cwd
+    # print out database infomation
+    logging.info('-'*50)
+    if args.type == 'taxon':
+        logging.info('Database type: Taxon')
+        if args.species is None:
+            logging.error('Taxon name not provided')
+            exit(1)
+        logging.info(f'Species: {args.species}')
+    if args.type == 'accession':
+        logging.info('Database type: Accession')
+        if args.list is None:
+            logging.error('Accession list not provided')
+            exit(1)
+        logging.info(f'Biosample accession list: {args.list}')
+        if args.email == None:
+            logging.error("Entrez email not provided.")
+            exit(1)
+    if args.name is None:
+        logging.error('Database name not provided')
+        exit(1)
+    logging.info(f'Database name: {args.name}')
+    logging.info(f'Maximum number of hashes: {args.number}')
+    logging.info(f'Kmer size: {args.ksize}')
+    logging.info('-'*50)
+    
+    # create a database folder
     cwd = os.getcwd()
-    db_path = os.path.join(cwd, args.name + '.db')
+    db_folder = os.path.join(cwd, args.name)
+    if os.path.isdir(db_folder):
+        logging.error(f'Folder {db_folder} already exists.')
+        exit(1)
+    os.mkdir(db_folder)
+    logging.info(f'Database folder created at {db_folder}')
 
-    #TODO: need methods to check if database already exists
-    conn = create_connection(db_path)
+    # create a tmp folder
+    tmp_folder = os.path.join(cwd, 'tmp')
+    if os.path.isdir(tmp_folder):
+        shutil.rmtree(tmp_folder)
+    os.mkdir(tmp_folder)
+    
+    # create a sqlite database
+    sql_path = os.path.join(db_folder, f'{args.name}.db')
+    conn = create_connection(sql_path)
     create_database(conn)
     
-    if args.assemblies is not None:
-        skesa_folder_name = args.assemblies
+    return db_folder,tmp_folder, conn
+
+def build_taxon(args):
+    # prepare the database folder and sqlite database
+    db_folder,tmp_folder,conn = prepare(args)
+    # format the pathogen name
+    pathogen_name = args.species.strip().replace(' ','_')
+    # validate the species name
+    results_response = urllib.request.urlopen('https://ftp.ncbi.nlm.nih.gov/pathogen/Results/')
+    results_html = results_response.read().decode('utf-8')
+    results_parser = Species_Name_Parser()
+    results_parser.feed(results_html)
+    pathogen_name_lower = pathogen_name.lower()
+    for item in results_parser.list:
+    # convert the list item to lowercase
+        item_lower = item.lower()
+        # compare the lowercase versions of the string and the list item
+        if pathogen_name_lower == item_lower:
+            pathogen_name = item
+            break
     else:
-        skesa_folder_name = 'fasta'
-    skesa_path = os.path.join(cwd,skesa_folder_name)
-    if os.path.exists(skesa_path):
-        pass
-    else:
-        os.mkdir(skesa_path)
-    # two types of database: standard/custom
-    if args.type == 'standard':
-        build_standard(args,conn,skesa_path)
-    # Build a custom database 
-    else:
-        load_dotenv('.env')
-        if os.environ.get('ENTREZ_EMAIL') == None:
-            print("Error! Entrez email is required. Run mashpit config first.")
-            exit(0)
-        Entrez.email = os.environ.get('ENTREZ_EMAIL')
-        if os.environ.get('ENTREZ_KEY')!= None:
-            Entrez.api_key = os.environ.get('ENTREZ_KEY')
-    
-        if not os.path.exists("biosample.error"):
-            os.system("touch biosample.error")
-        if args.type== "biosample_list":
-            f = open(args.list, 'r')
-            biosample_list = f.readlines()
-            for biosample in biosample_list:
-                biosample = biosample.strip('\n')
-                # find the ncbi-id for the specific biosample
-                handle_search = Entrez.esearch(db="biosample", term=biosample)
-                record_search = Entrez.read(handle_search)
-                id_list = record_search['IdList']
-                try:
-                    build_biosample_id(id_list[0], conn, skesa_path)
-                except:
-                    f_error_log = open("biosample.error", 'a')
-                    f_error_log.write(biosample + '\n')
-                    f_error_log.close()
-                    continue
-                conn.commit()
-            f.close()
-            c = conn.cursor()
-            c.execute("INSERT INTO DESC VALUES ('Type','List');")
-            conn.commit()
-        elif args.type == "keyword":
-            handle_search = Entrez.esearch(db="biosample", term=args.term, retmax=100000)
-            record_search = Entrez.read(handle_search)
-            id_list = record_search['IdList']
-            for id in id_list:
-                try:
-                    build_biosample_id(id, conn, skesa_path)
-                except:
-                    handle_fetch_biosample = Entrez.efetch(db='biosample', id=id)
-                    xml_result_biosample = handle_fetch_biosample.read()
-                    root_biosample = ET.fromstring(xml_result_biosample)
-                    acc = root_biosample.find('BioSample')
-                    f_error_log = open("biosample.error", 'a')
-                    f_error_log.write(acc + '\n')
-                    f_error_log.close()
-                    continue
-            conn.commit()
-            c = conn.cursor()
-            c.execute("INSERT INTO DESC VALUES ('Type','Keyword');")
-            conn.commit()
+        logging.error(f'Taxon {pathogen_name} not available on Pathogen Detection. Check for available names at https://ftp.ncbi.nlm.nih.gov/pathogen/Results/')
+        exit(1)
+    logging.info(f'Taxon name validated. Using {pathogen_name} as the taxon name.')
+    # download the latest PD metadata files and get the PDG accession
+    metadata_file_name,isolate_pds_file = download_metadata(pathogen_name,args.pd_version,tmp_folder)
+    df_metadata = pd.read_csv(os.path.join(tmp_folder,metadata_file_name),header=0,sep='\t')
+    df_isolate_pds = pd.read_csv(os.path.join(tmp_folder,isolate_pds_file),header=0,sep='\t')
+    # add cluster accession to metadata
+    df_metadata = df_metadata.join(df_isolate_pds[['target_acc','PDS_acc']].set_index('target_acc'),on='target_acc')
+    pdg_acc = metadata_file_name.replace('.metadata.tsv','')
+    # filter out isolates without genome assembly
+    df_metadata_asm = df_metadata[~df_metadata['asm_acc'].isnull()]
+    # calculate the centroid for each cluster
+    calculate_centroid(df_metadata_asm,pdg_acc,tmp_folder)
+    df_cluster_center = pd.read_csv(os.path.join(tmp_folder,f'{pdg_acc}_cluster_center.tsv'),sep='\t')
+    df_cluster_center_metadata = df_cluster_center.join(df_metadata_asm.drop('PDS_acc', axis=1).set_index('target_acc'),on='target_acc')
+    # download the centroid assembly using NCBI datasets
+    gca_acc_list = df_cluster_center_metadata['asm_acc'].to_list()
+    hash_number = args.number
+    kmer_size = args.ksize
+    download_and_sketch_assembly(gca_acc_list,hash_number,kmer_size,tmp_folder)
+
+    # merge all signature files
+    merge_sig(args,db_folder,tmp_folder)  
+
+    # import metadata to database
+    import_metadata(df_metadata,df_cluster_center_metadata,conn)
+
+    # add description to database
+    c = conn.cursor()
+    c.execute("INSERT INTO DESC VALUES ('Type','Taxonomy');")
+    c.execute(f"INSERT INTO DESC VALUES ('Species','{pathogen_name}');")
+    c.execute(f"INSERT INTO DESC VALUES ('Version','{pdg_acc}');")
+    c.execute(f"INSERT INTO DESC VALUES ('Hash_number','{str(hash_number)}');")
+    c.execute(f"INSERT INTO DESC VALUES ('Kmer_size','{str(kmer_size)}');")
+    conn.commit()
+
+    # delete temp files and folders
+    logging.info('Deleting temp file and folders')
+    shutil.rmtree(tmp_folder)
+    logging.info('Complete.')
+
+def build_accession(args):
+    db_folder,tmp_folder, conn = prepare(args)
+    Entrez.email = args.email
+    if args.key != None:
+        Entrez.api_key = args.key
+    # check if the list file exists
+    if not os.path.isfile(args.list):
+        logging.error(f'File {args.list} not found.')
+        exit(1)
+    # download assembly and get metadata
+    gca_acc_list = []
+    f = open(args.list, 'r')
+    biosample_list = f.readlines()
+    for biosample in biosample_list:
+        # check if the assembly is available on NCBI
+        esearch_handle = Entrez.esearch(db="assembly", term=biosample, retmax='3')
+        esearch_record = Entrez.read(esearch_handle)
+        # skip if no assembly found
+        if len(esearch_record['IdList']) == 0:
+            continue
+        # get assembly accession
+        esummary_handle = Entrez.esummary(db="assembly", id=esearch_record['IdList'][0], report="full")
+        esummary_record = Entrez.read(esummary_handle)
+        asm_acc = esummary_record['DocumentSummarySet']['DocumentSummary'][0]['AssemblyAccession']
+        gca_acc_list.append(asm_acc)
+        # get metadata
+        esearch_handle = Entrez.esearch(db="biosample", term=biosample, retmax='3')
+        esearch_record = Entrez.read(esearch_handle)
+        efetch_handle = Entrez.efetch(db='biosample', id=esearch_record['IdList'][0])
+        efetch_record = efetch_handle.read()
+        root = ET.fromstring(efetch_record)
+        info = {
+            'biosample_acc': None,
+            'taxid': None,
+            'strain': None,
+            'collected_by': None,
+            'collection_date': None,
+            'geo_loc_name': None,
+            'isolation_source': None,
+            'lat_lon': None,
+            'serovar': None,
+            'sub_species': None,
+            'species': None,
+            'genus': None,
+            'host': None,
+            'host_disease': None,
+            'outbreak': None,
+            'srr':None,
+            'PDT_acc':None,
+            'PDS_acc':None,
+            'asm_acc':None,
+            }
+        info['biosample_acc'] = biosample
+        info['asm_acc'] = asm_acc
+        for domain in root[0]:
+            if domain.tag == 'Attributes':
+                for sub_attrib in domain:
+                    if sub_attrib.attrib['attribute_name'] in info:
+                        info[sub_attrib.attrib['attribute_name']] = sub_attrib.text
+        insert_metadata(conn, info)
+    hash_number = args.number
+    kmer_size = args.ksize
+    download_and_sketch_assembly(gca_acc_list,hash_number,kmer_size,tmp_folder)
+    # merge all generated signature files
+    merge_sig(args,db_folder,tmp_folder)
+    c = conn.cursor()
+    c.execute("INSERT INTO DESC VALUES ('Type','Accession');")
+    c.execute("INSERT INTO DESC VALUES ('Hash_number','"+str(hash_number)+"');")
+    c.execute("INSERT INTO DESC VALUES ('Kmer_size','"+str(kmer_size)+"');")
+    conn.commit()
+    logging.info('Deleting tmp folders')
+    shutil.rmtree(tmp_folder)
+    logging.info('Complete.')
+
+def build(args):
+    if args.type =='taxon':
+        build_taxon(args)
+    elif args.type == 'accession':
+        build_accession(args)

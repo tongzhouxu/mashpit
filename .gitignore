@@ -1,4 +1,13 @@
 .DS_Store
 .idea/
 .vscode/
+/__pycache__/
 mashpit/__pycache__/
+mashpit/webserver.py
+mashpit/static/
+mashpit/templates/
+build/
+dist/
+*.egg-info/
+uploads/
+MANIFEST.in
