@@ -153,8 +153,9 @@ def query(args):
     if not os.path.exists(db_folder):
         logging.error('Database path not found.')
         exit(1)
-    sql_path = os.path.join(db_folder,f'{args.database}.db')
-    sig_path = os.path.join(db_folder, f'{args.database}.sig')
+    folder_name = os.path.basename(db_folder)
+    sql_path = os.path.join(db_folder,f'{folder_name}.db')
+    sig_path = os.path.join(db_folder, f'{folder_name}.sig')
     if not (os.path.exists(sql_path) and os.path.exists(sig_path)):
         logging.error('Database incomplete.')
         exit(1)

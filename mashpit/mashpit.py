@@ -46,8 +46,8 @@ def commandToArgs(commandline):
     subparser_update.set_defaults(func=update.update)
     
     # "query" subcommand
-    subparser_query.add_argument(dest="sample", type=str, help="file path of the query sample")
-    subparser_query.add_argument(dest="database", type=str, help="path for the database folder")
+    subparser_query.add_argument(dest="sample", type=str, help="file path to the query sample")
+    subparser_query.add_argument(dest="database", type=str, help="path to the database folder")
     subparser_query.add_argument("--number", type=int, help="number of isolates in the query output, default is 200",default=200)
     subparser_query.add_argument("--threshold", type=float, help="minimum jaccard similarity for mashtree, default is 0.85",default=0.85)
     subparser_query.add_argument("--annotation", type=str, help="mashtree tip annoatation, default is none")
