@@ -6,7 +6,7 @@ from mashpit import __version__
 from mashpit import build 
 from mashpit import update
 from mashpit import query
-from mashpit import webserver
+#from mashpit import webserver
 
 
 def commandToArgs(commandline):
