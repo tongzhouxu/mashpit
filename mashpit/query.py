@@ -7,6 +7,8 @@ import sourmash
 import heapq
 import time
 import pandas as pd
+import PyQt5
+import ete3
 
 from ete3 import Tree, TreeStyle, TextFace, NodeStyle
 from skbio import DistanceMatrix
