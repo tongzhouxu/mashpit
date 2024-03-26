@@ -16,6 +16,7 @@ jobs:
         uses: actions/setup-python@v4
         with:
           python-version: ${{ matrix.python-version }}
+          cache: 'pip'
       # printing the current Python version
       - name: Display Python version
         run: python -c "import sys; print(sys.version)"
@@ -28,7 +29,7 @@ jobs:
           mkdir ncbi_datasets
           curl -o ncbi_datasets/datasets 'https://ftp.ncbi.nlm.nih.gov/pub/datasets/command-line/v2/linux-amd64/datasets'
           chmod +x ncbi_datasets/datasets
-          echo "export PATH=$PATH:$PWD/ncbi_datasets" >> $GITHUB_ENV
+          echo "export PATH=$PATH:ncbi_datasets" >> $GITHUB_ENV
           which datasets
       - name: Install pytest
         run: |
@@ -36,5 +37,4 @@ jobs:
       - name: Run tests
         working-directory: mashpit/test
         run: |
-          which datasets
           pytest test.py
