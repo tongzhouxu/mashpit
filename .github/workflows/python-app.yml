@@ -26,10 +26,10 @@ jobs:
           pip install .
       - name: Download and set up ncbi datasets client
         run: |
-          mkdir ncbi_datasets
-          curl -o ncbi_datasets/datasets 'https://ftp.ncbi.nlm.nih.gov/pub/datasets/command-line/v2/linux-amd64/datasets'
-          chmod +x ncbi_datasets/datasets
-          echo "export PATH=$PATH:ncbi_datasets" >> $GITHUB_ENV
+          curl -o datasets 'https://ftp.ncbi.nlm.nih.gov/pub/datasets/command-line/v2/linux-amd64/datasets'
+          chmod +x datasets
+          mv datasets $HOME/.local/bin
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
           which datasets
       - name: Install pytest
         run: |
