@@ -28,6 +28,9 @@ jobs:
           curl -o datasets 'https://ftp.ncbi.nlm.nih.gov/pub/datasets/command-line/v2/linux-amd64/datasets'
           chmod +x datasets
           echo "export PATH=$PATH:./datasets" >> $GITHUB_ENV
+      - name: Install pytest
+        run: |
+          pip install pytest
       - name: Change directory to subfolder
         run: cd mashpit/test
       - name: Run tests
