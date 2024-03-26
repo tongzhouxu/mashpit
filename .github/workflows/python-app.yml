@@ -18,19 +18,25 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: 'pip'
       # printing the current Python version
-      - name: Display Python version
-        run: python -c "import sys; print(sys.version)"
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install .
       - name: Download and set up ncbi datasets client
         run: |
           curl -o datasets 'https://ftp.ncbi.nlm.nih.gov/pub/datasets/command-line/v2/linux-amd64/datasets'
           chmod +x datasets
           mv datasets $HOME/.local/bin
           echo "$HOME/.local/bin" >> $GITHUB_PATH
-          which datasets
+      - name: Check datasets location
+        run: ls -l $HOME/.local/bin/datasets   
+      - name: Check PATH
+        run: echo $PATH
+      - name: Run datasets
+        run: datasets --version
+      - name: Display Python version
+        run: python -c "import sys; print(sys.version)"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install .
+
       - name: Install pytest
         run: |
           pip install pytest
