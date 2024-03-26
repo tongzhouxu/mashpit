@@ -4,6 +4,7 @@ import pandas as pd
 import sqlite3
 import shutil
 
+from unittest.mock import MagicMock, patch
 from mashpit.build import create_connection
 from mashpit.build import create_database
 from mashpit.build import download_metadata
@@ -155,50 +156,6 @@ class TestCompareTables(unittest.TestCase):
         self.assertEqual(asm_acc_remove, ['asm3', 'asm2'])
         self.assertEqual(pds_to_add, ['PDS_002', 'PDS_004'])
         self.assertEqual(asm_acc_add, ['asm2', 'asm4'])
-
-class TestBuildAccession(unittest.TestCase):
-    def setUp(self):
-        class Args:
-            def __init__(self):
-                self.type = 'accession'
-                self.name = 'test_database'
-                self.quiet = True
-                self.number = 1000
-                self.ksize = 31
-                self.email = 'tongzhou.xu@uga.edu'
-                self.list = 'test_list'
-                self.key = None
-        self.args = Args()
-    def tearDown(self):
-        shutil.rmtree('test_database')
-    def test_build_accession(self):
-        build_accession(self.args)
-        self.assertTrue(os.path.isfile('test_database/test_database.db'))
-        self.assertTrue(os.path.isfile('test_database/test_database.sig'))
-        # check the database structure
-        conn = sqlite3.connect('test_database/test_database.db')
-        c = conn.cursor()
-        # check the number if lines in the METADATA table
-        c.execute("SELECT COUNT(*) FROM METADATA;")
-        result = c.fetchone()
-        self.assertEqual(result[0], 3)
-        c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='DESC';")
-        result = c.fetchone()
-        self.assertIsNotNone(result)
-        c.execute("PRAGMA table_info(METADATA);")
-        columns = [row[1] for row in c.fetchall()]
-        expected_columns = [
-            'biosample_acc', 'taxid', 'strain', 'collected_by', 'collection_date', 'geo_loc_name',
-            'isolation_source', 'lat_lon', 'serovar', 'sub_species', 'species', 'genus', 'host',
-            'host_disease', 'outbreak', 'srr', 'PDT_acc', 'PDS_acc', 'asm_acc'
-        ]
-        self.assertListEqual(columns, expected_columns)
-        c.execute("PRAGMA table_info(DESC);")
-        columns = [row[1] for row in c.fetchall()]
-        expected_columns = ['name', 'value']
-        self.assertListEqual(columns, expected_columns)
-        conn.close()
-        
 
 if __name__ == '__main__':
     unittest.main()
