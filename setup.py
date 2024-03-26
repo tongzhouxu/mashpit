@@ -26,6 +26,6 @@ setup(
         'python-dotenv',
         'tqdm',
         'flask',
-        'dask',
+        'dask[dataframe]',
     ]
 )
