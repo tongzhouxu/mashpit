@@ -32,6 +32,7 @@ jobs:
         run: |
           pip install pytest
       - name: Run tests
-        working-directory: test
+        working-directory: mashpit/test
         run: |
+          ls -al
           pytest test.py
