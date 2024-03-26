@@ -31,8 +31,7 @@ jobs:
       - name: Install pytest
         run: |
           pip install pytest
-      - name: Change directory to subfolder
-        run: cd mashpit/test
       - name: Run tests
+        working-directory: ./test
         run: |
           pytest test.py
