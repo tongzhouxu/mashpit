@@ -22,6 +22,7 @@ jobs:
         run: |
           curl -o datasets 'https://ftp.ncbi.nlm.nih.gov/pub/datasets/command-line/v2/linux-amd64/datasets'
           chmod +x datasets
+          mkdir -p $HOME/.local/bin
           mv datasets $HOME/.local/bin
           echo "$HOME/.local/bin" >> $GITHUB_PATH
       - name: Check datasets location
