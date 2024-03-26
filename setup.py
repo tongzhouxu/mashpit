@@ -7,7 +7,7 @@ with open("README.md", "r") as rm:
 
 setup(
     name='mashpit',
-    version='0.9.31',
+    version='0.9.32',
     url='https://github.com/tongzhouxu/mashpit',
     author='Tongzhou Xu',
     author_email='tongzhou.xu@uga.edu',
@@ -22,8 +22,6 @@ setup(
         'ncbi-datasets-pylib~=14.6.2',
         'pandas',
         'biopython',
-        'ete3',
-        'PyQt5',
         'scikit-bio',
         'python-dotenv',
         'tqdm',

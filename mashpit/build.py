@@ -582,6 +582,7 @@ def build_accession(args):
                     if sub_attrib.attrib['attribute_name'] in info:
                         info[sub_attrib.attrib['attribute_name']] = sub_attrib.text
         insert_metadata(conn, info)
+    f.close()
     hash_number = args.number
     kmer_size = args.ksize
     download_and_sketch_assembly(gca_acc_list,hash_number,kmer_size,tmp_folder)

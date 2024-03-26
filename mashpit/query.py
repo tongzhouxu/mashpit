@@ -7,10 +7,8 @@ import sourmash
 import heapq
 import time
 import pandas as pd
-import PyQt5
-import ete3
 
-from ete3 import Tree, TreeStyle, TextFace, NodeStyle
+from phytreeviz import TreeViz
 from skbio import DistanceMatrix
 from skbio.tree import nj
 from mashpit.build import create_connection
@@ -92,7 +90,7 @@ def generate_mashtree(output_df,min_similarity,query_name,sig_path,added_annotat
 
     dm = DistanceMatrix(matrix, leaves)
     newick_str = nj(dm, result_constructor=str)
-    with open('tree.newick','w') as f: 
+    with open(f'{query_name}_tree.newick','w') as f: 
         f.write(newick_str)
 
     # add annotation
@@ -105,29 +103,12 @@ def generate_mashtree(output_df,min_similarity,query_name,sig_path,added_annotat
             annotated_leaves.append(leaf)
         dm = DistanceMatrix(matrix, annotated_leaves)
         newick_str = nj(dm, result_constructor=str)
-        with open('annotated_tree.newick','w') as f: 
+        with open(f'{query_name}_annotated_tree.newick','w') as f: 
             f.write(newick_str)
-    t = Tree(newick_str)
-    ts = TreeStyle()
-    ts.show_leaf_name = False
-    # Reroot the tree at its midpoint
-    outgroup = t.get_midpoint_outgroup()
-    t.set_outgroup(outgroup)
-    # define a figure height
-    height = len(leaves)*20
-    width = 400
-    # Remove node shapes
-    for n in t.traverse():
-        nstyle = NodeStyle()
-        nstyle["size"] = 0  # Set node size to 0
-        n.set_style(nstyle)
-    # change tip text color to red if it is the query sample
-    for leaf in t:
-        if leaf.name == 'test':
-            leaf.add_face(TextFace(leaf.name, fgcolor='red'), column=0, position="branch-right")
-        else:
-            leaf.add_face(TextFace(leaf.name), column=0, position="branch-right")
-    t.render('mashtree.png', tree_style=ts, dpi=300, h=height, w=width)
+    
+    tv = TreeViz(f'{query_name}_tree.newick')
+    tv.set_node_label_props(query_name, color="red")
+    tv.savefig(f'{query_name}_tree.png', dpi=300)
 
 def query(args):
     t = time.localtime()

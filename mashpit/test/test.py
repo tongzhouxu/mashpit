@@ -10,7 +10,7 @@ from mashpit.build import download_metadata
 from mashpit.build import calculate_centroid
 from mashpit.build import download_and_sketch_assembly
 from mashpit.update import compare_tables
-from mashpit.query import build_accession
+from mashpit.build import build_accession
 
 class TestCreateConnection(unittest.TestCase):
     def test_connection_is_not_none(self):
@@ -70,12 +70,15 @@ class TestDownloadMetadata(unittest.TestCase):
         self.pd_version = None
         os.mkdir('tmp')
         self.tmpfolder = 'tmp'
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpfolder)
+    
+    def test_download_metadata(self):
         try:
             download_metadata(self.pathogen_name, self.pd_version, self.tmpfolder)
         except Exception as e:
             self.fail(f"download_metadata raised an exception: {e}")
-    def tearDown(self):
-        shutil.rmtree(self.tmpfolder)
 
 class TestCalculateCentroid(unittest.TestCase):
     def setUp(self):
@@ -92,6 +95,11 @@ class TestCalculateCentroid(unittest.TestCase):
         shutil.copy(self.metadata_file, self.tmpfolder)
         shutil.copy(self.distance_file, self.tmpfolder)
     
+
+    def tearDown(self):
+        # Remove temporary directory
+        shutil.rmtree(self.tmpfolder)
+
     def test_calculate_centroid_returns_expected_output(self):
         # Call calculate_centroid with test inputs
         df_metadata = pd.read_csv(self.metadata_file, sep='\t')
@@ -102,9 +110,6 @@ class TestCalculateCentroid(unittest.TestCase):
         actual_output.sort_values(by=['PDS_acc'],inplace=True)
         pd.testing.assert_frame_equal(actual_output, self.expected_output)
     
-    def tearDown(self):
-        # Remove temporary directory
-        shutil.rmtree(self.tmpfolder)
 
 class TestDownloadAndSketchAssembly(unittest.TestCase):
     def setUp(self):
@@ -114,11 +119,13 @@ class TestDownloadAndSketchAssembly(unittest.TestCase):
         self.gca_acc_list = ['GCA_015929625.1','GCA_009649915.1','GCA_001598315.1']
         self.tmpfolder = 'tmp'
         os.mkdir(self.tmpfolder)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpfolder)
+
     def test_download_and_sketch_assembly(self):
         download_and_sketch_assembly(self.gca_acc_list, self.hash_number, self.kmer_size,self.tmpfolder)
         self.assertTrue(os.path.isfile(os.path.join(self.tmpfolder,'signature', 'GCA_015929625.1.sig')))
-    def tearDown(self):
-        shutil.rmtree(self.tmpfolder)
 
 class TestCompareTables(unittest.TestCase):
 
@@ -141,7 +148,7 @@ class TestCompareTables(unittest.TestCase):
         })
         
         # Call the function to compare the tables
-        pds_to_remove, asm_acc_remove, pds_to_add, asm_acc_add = compare_tables(database_cluster_center, latest_cluster_center_metadata, latest_cluster_center)
+        pds_to_remove, asm_acc_remove, pds_to_add, asm_acc_add = compare_tables(database_cluster_center, latest_cluster_center_metadata)
         
         # Assert that the expected changes were identified
         self.assertEqual(pds_to_remove, ['PDS_003','PDS_002'])
@@ -150,8 +157,7 @@ class TestCompareTables(unittest.TestCase):
         self.assertEqual(asm_acc_add, ['asm2', 'asm4'])
 
 class TestBuildAccession(unittest.TestCase):
-
-    def test_build_accession(self):
+    def setUp(self):
         class Args:
             def __init__(self):
                 self.type = 'accession'
@@ -161,12 +167,16 @@ class TestBuildAccession(unittest.TestCase):
                 self.ksize = 31
                 self.email = 'tongzhou.xu@uga.edu'
                 self.list = 'test_list'
-        args = Args()
-        build_accession(args)
-        self.assertTrue(os.path.isfile('test_database/test.db'))
-        self.assertTrue(os.path.isfile('test_database/test.sig'))
+                self.key = None
+        self.args = Args()
+    def tearDown(self):
+        shutil.rmtree('test_database')
+    def test_build_accession(self):
+        build_accession(self.args)
+        self.assertTrue(os.path.isfile('test_database/test_database.db'))
+        self.assertTrue(os.path.isfile('test_database/test_database.sig'))
         # check the database structure
-        conn = sqlite3.connect('test_database/test.db')
+        conn = sqlite3.connect('test_database/test_database.db')
         c = conn.cursor()
         # check the number if lines in the METADATA table
         c.execute("SELECT COUNT(*) FROM METADATA;")

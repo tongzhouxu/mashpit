@@ -6,6 +6,7 @@ mashpit/__pycache__/
 mashpit/webserver.py
 mashpit/static/
 mashpit/templates/
+mashpit/test/__pycache__/
 build/
 dist/
 *.egg-info/
