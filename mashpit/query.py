@@ -103,9 +103,9 @@ def generate_mashtree(output_df,min_similarity,query_name,sig_path,added_annotat
             annotated_leaves.append(leaf)
         dm = DistanceMatrix(matrix, annotated_leaves)
         newick_str = nj(dm, result_constructor=str)
-        with open(f'{query_name}_annotated_tree.newick','w') as f: 
+        with open(f'{query_name}_tree.newick','w') as f: 
             f.write(newick_str)
-    tree = Phylo.read(f'{query_name}_annotated_tree.newick', "newick")
+    tree = Phylo.read(f'{query_name}_tree.newick', "newick")
     n = len(tree.get_terminals())
     fig = plt.figure(figsize=(10, n*0.35), dpi=300)
     axes = fig.add_subplot(1, 1, 1)
