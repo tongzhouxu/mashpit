@@ -7,14 +7,14 @@ import sourmash
 import heapq
 import time
 import pandas as pd
+import matplotlib.pyplot as plt
 
-from phytreeviz import TreeViz
 from skbio import DistanceMatrix
 from skbio.tree import nj
+from Bio import Phylo
 from mashpit.build import create_connection
 from operator import itemgetter
 from sourmash import SourmashSignature, save_signatures, load_one_signature, load_file_as_signatures
-
 
 def get_query_sig(query_path, query_name,hash_number,kmer_size):
     genome = query_path
@@ -105,10 +105,21 @@ def generate_mashtree(output_df,min_similarity,query_name,sig_path,added_annotat
         newick_str = nj(dm, result_constructor=str)
         with open(f'{query_name}_annotated_tree.newick','w') as f: 
             f.write(newick_str)
-    
-    tv = TreeViz(f'{query_name}_tree.newick')
-    tv.set_node_label_props(query_name, color="red")
-    tv.savefig(f'{query_name}_tree.png', dpi=300)
+    tree = Phylo.read(f'{query_name}_annotated_tree.newick', "newick")
+    n = len(tree.get_terminals())
+    fig = plt.figure(figsize=(10, n*0.35), dpi=300)
+    axes = fig.add_subplot(1, 1, 1)
+    # disable the axes and borders
+    axes.set_frame_on(False)
+    # remove ticks and labels
+    axes.set_xticks([])
+    axes.set_yticks([])
+    axes.set_xticklabels([])
+    axes.set_yticklabels([])
+    # add white background
+    fig.patch.set_facecolor('white')
+    Phylo.draw(tree, axes=axes,do_show=False)
+    plt.savefig(f'{query_name}_tree.png')
 
 def query(args):
     t = time.localtime()
