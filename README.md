@@ -1,28 +1,31 @@
 # Mashpit
+[![install with bioconda](https://img.shields.io/badge/install%20with-bioconda-brightgreen.svg?style=flat)](http://bioconda.github.io/recipes/mashpit/README.html)
 ![unittest](https://github.com/tongzhouxu/mashpit/actions/workflows/python-app.yml/badge.svg)
 [![License: GPL v2](https://img.shields.io/badge/License-GPL_v2-blue.svg)](https://www.gnu.org/licenses/old-licenses/gpl-2.0.en.html)
 [![PyPI release](https://img.shields.io/pypi/v/mashpit)](https://pypi.python.org/pypi/mashpit/)
 
 Create a database of mash signatures and find the most similar genomes to a target sample 
 
-## Dependencies
-
-- Python >= 3.8
-- NCBI datasets
 
 ## Installation
-Install NCBI datasets
+### Option 1. Install with Conda/Mamba (Recommended)
+```
+conda create -n mashpit -c conda-forge -c bioconda 'mashpit=0.9.6'
+conda activate mashpit
+```
+### Option 2. Install with pip
+#### 1. Dependency: Install NCBI datasets
 ```
 curl -o datasets 'https://ftp.ncbi.nlm.nih.gov/pub/datasets/command-line/v2/linux-amd64/datasets'
 chmod +x datasets
 export PATH=$PATH:$PWD
 ```
 
-Install mashpit using pip:
+#### 2. Install mashpit using pip:
   ```
   pip install mashpit
   ```
-Or git clone from github:
+#### Or git clone from github:
   ```
   git clone https://github.com/tongzhouxu/mashpit.git
   cd mashpit
