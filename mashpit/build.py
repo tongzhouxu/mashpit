@@ -21,8 +21,6 @@ from tqdm import tqdm
 from Bio import Entrez
 from html.parser import HTMLParser
 from sourmash import SourmashSignature, save_signatures, load_one_signature, MinHash
-from ncbi.datasets.openapi import ApiClient as DatasetsApiClient
-from ncbi.datasets import GenomeApi as DatasetsGenomeApi
 
 # create connection to sqlite db file
 def create_connection(sql_path):
