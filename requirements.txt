@@ -49,7 +49,7 @@ pandas==2.2.1
 parso==0.8.3
 partd==1.4.1
 pexpect==4.9.0
-pillow==10.2.0
+pillow==10.3.0
 pluggy==1.4.0
 prompt-toolkit==3.0.43
 protobuf==3.20.3
