@@ -43,7 +43,6 @@ mashpit @ file:///Users/tongzhou/mashpit
 matplotlib==3.8.3
 matplotlib-inline==0.1.6
 natsort==8.4.0
-ncbi-datasets-pylib==14.6.5
 numpy==1.26.4
 packaging==24.0
 pandas==2.2.1

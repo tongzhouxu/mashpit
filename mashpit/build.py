@@ -219,71 +219,25 @@ def calculate_centroid(df_metadata,pdg_acc,tmp_folder):
 def download_and_sketch_assembly(gca_acc_list,hash_number,kmer_size,tmp_folder):
     logging.info('Downloading and sketching assemblies...')
     time_start_download_and_sketch_assembly = time.time()
-    with DatasetsApiClient() as api_client:
-        api_instance = DatasetsGenomeApi(api_client)
-        if len(gca_acc_list) <= 400:
-                api_response = api_instance.download_assembly_package(
-                    gca_acc_list,
-                    _preload_content=False,
-                    hydrated='DATA_REPORT_ONLY',
-                    _request_timeout=600,
-                    _return_http_data_only=True
-                )
-                zip_file = os.path.join(tmp_folder,'assembly.zip')
-                with open(zip_file, 'wb') as f:
-                    f.write(api_response.data)
-                    api_response.close()
-                api_client.close()
-                with zipfile.ZipFile(zip_file, 'r') as zip_ref:
-                    zip_ref.extractall(os.path.join(tmp_folder,'assembly'))
-                # try to rehydrate the dataset, if failed, try again after 5 seconds
-                while True:
-                    try:
-                        subprocess.run(['datasets', 'rehydrate', '--directory', os.path.join(tmp_folder,'assembly')],
-                                       check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                        break
-                    except subprocess.CalledProcessError:
-                        time.sleep(5)
-                        logging.error(f'Failed to rehydrate {tmp_folder}/assembly. Trying again...')    
-        else:
-            # divide the list into chunks if the list is too long for HTTP request
-            chunk_list = [gca_acc_list[i:i+400] for i in range(0, len(gca_acc_list), 400)]
-            j = 0
-            for sublist in chunk_list:
-                api_response = api_instance.download_assembly_package(
-                    sublist,
-                    _preload_content=False,
-                    hydrated='DATA_REPORT_ONLY',
-                    _request_timeout=600,
-                    _return_http_data_only=True
-                )
-                zip_file = os.path.join(tmp_folder,'assembly_'+str(j)+'.zip')
-                with open(zip_file, 'wb') as f:
-                    f.write(api_response.data)
-                    api_response.close()
-                j = j+1
-            api_client.close()
-            # get a list of all zip files in tmp folder
-            file_list = glob.glob(os.path.join(tmp_folder,'assembly_' + '*'))
-            os.makedirs(os.path.join(tmp_folder,'assembly','ncbi_dataset','data'))
-            for file in file_list:
-                with zipfile.ZipFile(file, 'r') as zip_ref:
-                    folder_name = file.replace('.zip','')
-                    zip_ref.extractall(os.path.join(tmp_folder,folder_name))
-                    # try to rehydrate the dataset, if failed, try again after 5 seconds
-                    while True:
-                        try:
-                            subprocess.run(['datasets', 'rehydrate', '--directory', os.path.join(tmp_folder,folder_name)],
-                                           check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                            break
-                        except subprocess.CalledProcessError:
-                            time.sleep(5)
-                            logging.error(f'Failed to rehydrate {folder_name}. Trying again...')
-                    source_folder = os.path.join(tmp_folder,folder_name,'ncbi_dataset','data','GCA_*')
-                    destination_folder = os.path.join(tmp_folder,'assembly','ncbi_dataset','data')
-                    files_to_move = glob.glob(source_folder)
-                    for f in files_to_move:
-                        shutil.move(f, destination_folder) 
+    gca_acc_file = os.path.join(tmp_folder,'gca_list.txt')
+    with open(gca_acc_file, 'w') as f:
+        for item in gca_acc_list:
+            f.write("%s\n" % item)
+    subprocess.run(['datasets', 'download', 'genome','accession', '--inputfile', gca_acc_file, '--filename', 'assembly.zip','--dehydrated'])
+    # move the zip file to the tmp folder
+    zip_file = os.path.join(tmp_folder,'assembly.zip')
+    shutil.move('assembly.zip',zip_file)
+    with zipfile.ZipFile(zip_file, 'r') as zip_ref:
+        zip_ref.extractall(os.path.join(tmp_folder,'assembly'))
+    # try to rehydrate the dataset, if failed, try again after 5 seconds
+    while True:
+        try:
+            subprocess.run(['datasets', 'rehydrate', '--directory', os.path.join(tmp_folder,'assembly')],
+                            check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            break
+        except subprocess.CalledProcessError:
+            time.sleep(5)
+            logging.error(f'Failed to rehydrate {tmp_folder}/assembly. Trying again...')
     time_end_download = time.time()
     logging.info(f'Downloaded {len(gca_acc_list)} assemblies in {round(time_end_download-time_start_download_and_sketch_assembly,2)} seconds.')
     os.mkdir(os.path.join(tmp_folder,'signature'))

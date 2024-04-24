@@ -19,7 +19,6 @@ setup(
     entry_points={'console_scripts':['mashpit=mashpit.mashpit:main']},
     install_requires=[
         'sourmash~=4.6.1',
-        'ncbi-datasets-pylib~=14.6.2',
         'pandas',
         'biopython',
         'scikit-bio',
