@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import os
+import glob
 import logging
 import ntpath
 import screed
@@ -49,7 +50,7 @@ def generate_query_table(conn, sorted_asm_similarity_dict):
     if db_type == 'Taxonomy':
         pds_list = output_df['PDS_acc'].to_list()
         cluster_link = [f'https://www.ncbi.nlm.nih.gov/pathogens/isolates/#{pds}' for pds in pds_list]
-        output_df['link'] = cluster_link
+        output_df['SNP_tree_link'] = cluster_link
 
     return output_df
 
@@ -107,7 +108,7 @@ def generate_mashtree(output_df,min_similarity,query_name,sig_path,added_annotat
             f.write(newick_str)
     tree = Phylo.read(f'{query_name}_tree.newick', "newick")
     n = len(tree.get_terminals())
-    fig = plt.figure(figsize=(10, n*0.35), dpi=300)
+    fig = plt.figure(figsize=(10, n*0.2), dpi=150)
     axes = fig.add_subplot(1, 1, 1)
     # disable the axes and borders
     axes.set_frame_on(False)
@@ -147,11 +148,27 @@ def query(args):
     if not os.path.exists(db_folder):
         logging.error('Database path not found.')
         exit(1)
-    folder_name = os.path.basename(db_folder)
-    sql_path = os.path.join(db_folder,f'{folder_name}.db')
-    sig_path = os.path.join(db_folder, f'{folder_name}.sig')
-    if not (os.path.exists(sql_path) and os.path.exists(sig_path)):
-        logging.error('Database incomplete.')
+    # find files ending with .db
+    sql_path = glob.glob(os.path.join(db_folder,'*.db'))
+    if len(sql_path) == 0:
+        logging.error('Database path not found.')
+        exit(1)
+    if len(sql_path) > 1:
+        logging.error('Multiple database files found.')
+        exit(1)
+    sql_path = sql_path[0]
+    # find files ending with .sig
+    sig_path = glob.glob(os.path.join(db_folder,'*.sig'))
+    if len(sig_path) == 0:
+        logging.error('Signature file not found.')
+        exit(1)
+    if len(sig_path) > 1:
+        logging.error('Multiple signature files found.')
+        exit(1)
+    sig_path = sig_path[0]
+    # check if the basename of .db and .sig are the same
+    if os.path.basename(sql_path).split('.')[0] != os.path.basename(sig_path).split('.')[0]:
+        logging.error('Database sql and signature files do not match.')
         exit(1)
 
     # check the hash number and kmer size in the database

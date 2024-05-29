@@ -6,7 +6,7 @@ from mashpit import __version__
 from mashpit import build 
 from mashpit import update
 from mashpit import query
-#from mashpit import webserver
+from mashpit import webserver
 
 
 def commandToArgs(commandline):
@@ -54,7 +54,7 @@ def commandToArgs(commandline):
     subparser_query.set_defaults(func=query.query)
 
     # "webserver" subcommand
-    # subparser_webserver.set_defaults(func=webserver.webserver)
+    subparser_webserver.set_defaults(func=webserver.webserver)
 
     args = parser.parse_args(commandline)
     return args

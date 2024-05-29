@@ -10,6 +10,7 @@ import shutil
 import logging
 import sqlite3
 import requests
+import psutil
 import subprocess
 
 import urllib.request
@@ -21,6 +22,12 @@ from tqdm import tqdm
 from Bio import Entrez
 from html.parser import HTMLParser
 from sourmash import SourmashSignature, save_signatures, load_one_signature, MinHash
+
+def log_memory_usage(stage):
+    process = psutil.Process()
+    mem_info = process.memory_info()
+    logging.info(f"{stage} - RSS: {mem_info.rss / 1024 ** 2:.2f} MB, VMS: {mem_info.vms / 1024 ** 2:.2f} MB")
+
 
 # create connection to sqlite db file
 def create_connection(sql_path):
@@ -414,6 +421,7 @@ def prepare(args):
     return db_folder,tmp_folder, conn
 
 def build_taxon(args):
+    log_memory_usage('start')
     # prepare the database folder and sqlite database
     db_folder,tmp_folder,conn = prepare(args)
     # format the pathogen name
@@ -437,6 +445,7 @@ def build_taxon(args):
     logging.info(f'Taxon name validated. Using {pathogen_name} as the taxon name.')
     # download the latest PD metadata files and get the PDG accession
     metadata_file_name,isolate_pds_file = download_metadata(pathogen_name,args.pd_version,tmp_folder)
+    log_memory_usage('After downloading files')
     df_metadata = pd.read_csv(os.path.join(tmp_folder,metadata_file_name),header=0,sep='\t')
     df_isolate_pds = pd.read_csv(os.path.join(tmp_folder,isolate_pds_file),header=0,sep='\t')
     # add cluster accession to metadata
@@ -448,18 +457,19 @@ def build_taxon(args):
     calculate_centroid(df_metadata_asm,pdg_acc,tmp_folder)
     df_cluster_center = pd.read_csv(os.path.join(tmp_folder,f'{pdg_acc}_cluster_center.tsv'),sep='\t')
     df_cluster_center_metadata = df_cluster_center.join(df_metadata_asm.drop('PDS_acc', axis=1).set_index('target_acc'),on='target_acc')
+    log_memory_usage('After centroid calculation')
     # download the centroid assembly using NCBI datasets
     gca_acc_list = df_cluster_center_metadata['asm_acc'].to_list()
     hash_number = args.number
     kmer_size = args.ksize
     download_and_sketch_assembly(gca_acc_list,hash_number,kmer_size,tmp_folder)
-
+    log_memory_usage('After downloading assemblies')
     # merge all signature files
     merge_sig(args,db_folder,tmp_folder)  
-
+    log_memory_usage('After merging signature files')
     # import metadata to database
     import_metadata(df_metadata,df_cluster_center_metadata,conn)
-
+    log_memory_usage('After importing metadata')
     # add description to database
     c = conn.cursor()
     c.execute("INSERT INTO DESC VALUES ('Type','Taxonomy');")
