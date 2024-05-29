@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Mashpit{% endblock %}
+{% block content %}
+<div class="container">
+  <h1>
+    <strong>Mashpit</strong>
+    <br />
+    <small class="text-muted fw-light">
+      <span style="font-size: 0.5em;">A sketch-based survilliance database</span>
+    </small>
+  </h1>
+  <br />
+  <div class="container d-flex align-items-center">
+    <h1 class="me-3" style="font-family: Arial, sans-serif">Loading...</h1>
+    <div class="spinner-border" role="status"></div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+    <script>
+        $(document).ready(function() {
+            // Check the classification status every 2 seconds
+            setInterval(function() {
+                $.get('/status', function(data) {
+                    if (data === 'complete') {
+                        // Redirect to the result page if the classification is complete
+                        window.location.href = '/result';
+                    } else {
+                        // Update the status message
+                        $('#status').text(data);
+
+                    }
+                });
+            }, 2000);
+        });
+    </script>
+{% endblock %}
+

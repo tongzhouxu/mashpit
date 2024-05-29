@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+
+{% block title %}Mashpit{% endblock %}
+{% block css %}
+<style>
+  .full-width-table {
+      width: 90%; /* Ensures the table takes up the full width of its container */
+  }
+  .container {
+      max-width: 80%; /* Adjusts the container width to a larger percentage */
+  }
+  .table thead th {
+      text-align: left; /* Aligns header content to the left */
+  }
+  .zoomable-image {
+    width: 20%; /* Adjusts the image width to 20% */
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+  <div class="container">
+    <h1>
+      <strong>Mashpit</strong>
+      <br />
+      <small class="text-muted fw-light">
+        <span style="font-size: 0.5em;">A sketch-based surveillance database</span>
+      </small>
+    </h1>
+    <br />
+    <!-- Tab Navigation -->
+    <ul class="nav nav-tabs" id="resultTabs" role="tablist">
+      <li class="nav-item" role="presentation">
+        <button class="nav-link active" id="table-tab" data-bs-toggle="tab" data-bs-target="#table" type="button" role="tab" aria-controls="table" aria-selected="false">Query Result</button>
+      </li>
+      <li class="nav-item" role="presentation">
+        <button class="nav-link" id="image-tab" data-bs-toggle="tab" data-bs-target="#image" type="button" role="tab" aria-controls="image" aria-selected="true">Mashtree</button>
+      </li>
+      
+    </ul>
+    <!-- Tab Content -->
+    <div class="tab-content" id="myTabContent">
+      
+      <div class="tab-pane fade show active" id="table" role="tabpanel" aria-labelledby="table-tab">
+        <div class="table-responsive">
+          <table class="table table-bordered table-striped table-hover full-width-table">
+            {{ df_output_html|safe }}
+          </table>
+        </div>
+      </div>
+
+      <div class="tab-pane fade" id="image" role="tabpanel" aria-labelledby="image-tab">
+        <div class="container">
+          <div class="row">
+            <div class="col">
+              <img src="{{ url_for('static', filename=image_path) }}" class="img-fluid" alt="Neighbor-joining tree based on Mash distances" />
+            </div>
+          </div>
+        </div>
+      </div>
+
+
+    </div>
+  </div>
+{% endblock %}

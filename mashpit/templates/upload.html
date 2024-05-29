@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+
+{% block title %}Mashpit{% endblock %}
+{% block content %}
+    <div class="container">
+      <h1>
+        <strong>Mashpit</strong>
+        <br />
+        <small class="text-muted fw-light">
+          <span style="font-size: 0.5em;">A sketch-based survilliance database</span>
+        </small>
+      </h1>
+      <br />
+      <div class="row justify-content-start">
+        <div class="col-md-6">
+              <br />
+              <form action="/submit" method="POST" enctype="multipart/form-data">
+                <div class="mb-3">   
+                    <label for="formFile_db" class="form-label">Select the database (.db) file</label>
+                    <input class="form-control" type="file" id="formFile_db" name="formFile_db">
+                </div>
+                <div class="mb-3">
+                    <label for="formFile_sig" class="form-label">Select the database signature (.sig) file</label>
+                    <input class="form-control" type="file" id="formFile_sig" name="formFile_sig">
+                </div>
+                <div class="mb-3">
+                    <label for="formFile_assembly" class="form-label">Select the query assembly file</label>
+                    <input class="form-control" type="file" id="formFile_assembly" name="formFile_assembly">
+                </div>
+                <button type="submit" class="btn btn-secondary">Submit</button>
+            </form>
+        </div>
+      </div>
+    </div>
+{% endblock %}

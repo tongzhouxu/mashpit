@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="X-UA-Compatible" content="ie=edge" />
+    <title>{% block title %}{% endblock %}</title>
+    <link rel="stylesheet" href="static/bootstrap.min.css" />
+    <style>
+      {% block css %}{% endblock %}
+    </style>
+  </head>
+  <body class="d-flex flex-column min-vh-100">
+    <div class="flex-grow-1">
+      {% block content %}{% endblock %}
+    </div>
+    <div class="footer sticky-footer">
+      <div class="container text-center">
+        <p class="text-muted">
+          Copyright 2024
+          <a href="http://denglab.info" class="text-muted">Deng Lab</a>
+        </p>
+      </div>
+    </div>
+    <script src="static/bootstrap.min.js"></script>
+    <script src="static/jquery-3.6.0.min.js"></script>
+    {% block scripts %}{% endblock %}
+  </body>
+</html>
