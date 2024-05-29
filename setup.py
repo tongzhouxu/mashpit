@@ -25,6 +25,5 @@ setup(
         'tqdm',
         'flask',
         'dask[dataframe]',
-        'ncbi-datasets-cli',
     ]
 )
