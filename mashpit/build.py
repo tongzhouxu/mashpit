@@ -421,9 +421,9 @@ def prepare(args):
     return db_folder,tmp_folder, conn
 
 def build_taxon(args):
-    log_memory_usage('start')
     # prepare the database folder and sqlite database
     db_folder,tmp_folder,conn = prepare(args)
+    log_memory_usage('start')
     # format the pathogen name
     pathogen_name = args.species.strip().replace(' ','_')
     # validate the species name
