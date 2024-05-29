@@ -25,5 +25,6 @@ setup(
         'tqdm',
         'flask',
         'dask[dataframe]',
+        'psutil',
     ]
 )

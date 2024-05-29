@@ -83,3 +83,4 @@ urllib3==1.26.18
 wcwidth==0.2.13
 Werkzeug==3.0.3
 zipp==3.18.1
+psutil==5.9.8
