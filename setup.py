@@ -26,5 +26,6 @@ setup(
         'flask',
         'dask[dataframe]',
         'psutil',
+        'phytreeviz',
     ]
 )

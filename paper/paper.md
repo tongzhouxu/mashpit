@@ -77,19 +77,25 @@ The database is created with an interface to Mash, called Sourmash [@Brown2016].
 Each genome is imported by sketching it and adding it to a Sourmash signature database.
 Each genome can also have an entry in the associated metadata.
 These data include date of isolation, geography, host age range, and other information that could be useful in an epidemiological investigation.
-If the import is performed by downloading the genome from NCBI, then its associated BioSample data are also imported into the associated metadata.
-We have calculated that it takes about 1-2 seconds to download each genome from NCBI, 0.5 seconds to sketch it and add it to the signature database.
-For 399162 samples, it takes 2-3 minutes to import all NCBI metadata.
-Finally, it takes 3-4 hours total to select a representative for each NCBI cluster.
+Mashpit can build a species database from NCBI Pathogen Detection, termed a Mashpit taxon database or a custom database from user-provided genomes. The Mashpit taxon database is based on the available pathogen species on Pathogen Detection. For each SNP cluster of one species on Pathogen Detection, the set of all genomes in an SNP cluster is defined as:
+$$G=\{g_1,g_2,…,g_n\}$$
+where n is the number of genomes in the cluster.
+The centroid genome $g_c$ is calculated as:
+$$g_c=\underset{g_i∈G}{argmin}\sum_{j=1}^{n} d(g_i,g_j)$$
+Where $d(g_i,g_j)$ is the distance between two genomes.
+By default, Mashpit will download the latest SNP cluster for specified species and uses a kmer size of 31 and kmer number of 1000 for sketching the genomes. 
 
-Because it takes more than a few hours to create a large comprehensive database, we have created a versioned Salmonella Mashpit database available from our GitHub site.
+To evaluate the performance of Mashpit, we tested Mashpit on a server that runs Ubuntu 20.04.2 with an Intel Xeon CPU E5-2697 v4 2.30GHz and 256GB RAM. The elapsed time of building a database and running a query was calculated for four of the major foodborne pathogens: _Salmonella_, _Listeria_, _E. coli_, and _Campylobactor_.
+
 
 With the database and its metadata complete, a user could perform a query.
 The query is an assembly fasta file, which is then sketched and compared against the signature database.
-The query then returns a tab delimited spreadsheet, sorted by Mash distance.
+The query then returns a tab delimited spreadsheet, sorted by Mash distance and a phylogenetic tree based on the Mash distance.
 All associated metadata are included in the spreadsheet.
 
-The speed of the query is determined by the database size (\autoref{fig:queryTime}).
+# Performance
+
+We evaluated Mashpit's performance using 1000 query genomes against _Salmonella_, _Listeria_, _E. coli_, and _Campylobacter_ Mashpit taxon databases, built from SNP clusters defined by NCBI pathogen detection in January 2024. To assess sensitivity, we randomly selected 1000 newly added genomes post-January 2024 and examined Mashpit's ability to identify the true SNP cluster within the top output hits. The average speed of the query is shown in Figure A(\autoref{fig:figure}). The rate of true SNP clusters in the top rate with different thresholds is shown in Figure B(\autoref{fig:figure}).
 
 # Discussion
 
@@ -102,7 +108,7 @@ In conclusion, we believe that Mashpit is an essential genomic epidemiology tool
 
 # Figures
 
-![The speed of an individual query strongly correlates to the size of the database with a linear relationship. For every 10^4 samples, the time of each query increases about 6.8 seconds.\label{fig:queryTime}](query_time.png)
+![Performance of Mashpit query. A. Average time of a query against four Mashpit taxon databases. B. Rate of true SNP clusters in top rate with different thresholds. \label{fig:figure}](figure.png)
 
 # Acknowledgements
 
