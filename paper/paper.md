@@ -24,7 +24,7 @@ affiliations:
    index: 1
  - name: Enteric Diseases Laboratory Branch (EDLB), Centers for Disease Control and Prevention, Atlanta, GA, USA
    index: 2
-date: 18 May 2022
+date: 7 Aug 2024
 bibliography: paper.bib
 
 ---
@@ -39,7 +39,7 @@ These publicly available genomes can be analyzed in a variety of ways such as se
 multilocus sequence typing (MLST) [@zhou2020enterobase], and single nucleotide polymorphism (SNP) typing [@katz2017comparative].
 These analyses provide important laboratory evidence for outbreak surveillance and investigation.
 
-At the time of this writing in March 2022, there are more than 400 thousand _Salmonella_ genomes and more than half a million other pathogen genomes at NCBI Pathogen Detection (https://www.ncbi.nlm.nih.gov/pathogens).
+As of August 2024, there are more than 600 thousand _Salmonella_ genomes and more than half a million other pathogen genomes at NCBI Pathogen Detection (https://www.ncbi.nlm.nih.gov/pathogens).
 These numbers are expected to increase dramatically and therefore faster methods are needed.
 
 There have been some major advances to scale up bioinformatic analyses to large volumes of pathogenic genomes.
@@ -95,7 +95,7 @@ All associated metadata are included in the spreadsheet.
 
 # Performance
 
-We evaluated Mashpit's performance using 1000 query genomes against _Salmonella_, _Listeria_, _E. coli_, and _Campylobacter_ Mashpit taxon databases, built from SNP clusters defined by NCBI pathogen detection in January 2024. To assess sensitivity, we randomly selected 1000 newly added genomes post-January 2024 and examined Mashpit's ability to identify the true SNP cluster within the top output hits. The average speed of the query is shown in Figure A(\autoref{fig:figure}). The rate of true SNP clusters in the top rate with different thresholds is shown in Figure B(\autoref{fig:figure}).
+We evaluated Mashpit's performance using 1000 query genomes against _Salmonella_, _Listeria_, _E. coli_, and _Campylobacter_ Mashpit taxon databases, built from SNP clusters defined by NCBI pathogen detection in January 2024. To assess sensitivity, we randomly selected 1000 newly added genomes post-January 2024 and examined Mashpit's ability to identify the true SNP cluster within the top output hits. The average speed of the query is shown in Figure A(\autoref{fig:figure}). The rate of true SNP clusters being in the top hits with different thresholds is shown in Figure B(\autoref{fig:figure}).
 
 # Discussion
 
