@@ -69,7 +69,7 @@ optional arguments:
 ```
 - Example command
 ```
-mashpit build taxon salmonella -s Salmonella
+mashpit build taxon salmonella --species Salmonella
 ```
 
 Note: Supported species names can be found in this [list](https://ftp.ncbi.nlm.nih.gov/pathogen/Results/)
@@ -110,4 +110,9 @@ optional arguments:
 - Example command
 ```
 mashpit update path/to/database salmonella
+```
+### Webserver
+A local host webserver can be started using:
+```
+mashpit webserver
 ```
