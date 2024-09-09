@@ -95,7 +95,7 @@ All associated metadata are included in the spreadsheet.
 
 # Performance
 
-We evaluated Mashpit's performance using 1000 query genomes against _Salmonella_, _Listeria_, _E. coli_, and _Campylobacter_ Mashpit taxon databases, built from SNP clusters defined by NCBI pathogen detection in January 2024. To assess sensitivity, we randomly selected 1000 newly added genomes post-January 2024 and examined Mashpit's ability to identify the true SNP cluster within the top output hits. The average speed of the query is shown in Figure A(\autoref{fig:figure}). The rate of true SNP clusters being in the top hits with different thresholds is shown in Figure B(\autoref{fig:figure}).
+To evaluated the performance of Mashpit, we constructed Mashpit taxon databases for _Salmonella_, _Listeria_, _E. coli_, and _Campylobacter_ using NCBI pathogen detection SNP clusters versioned before January 2024. We randomly selected 1000 newly added genomes for each species added to NCBI pathogen detection after January 2024. Subsequently, we queried these genomes against Mahpit taxon databases and recorded the time taken for each step (\autoref{fig:figure}). We also compared the query results with the true SNP cluster of the query genomes. We calclated the proportion of true SNP clusters appearing among the top hits at various thresholds (\autoref{fig:figure}). The 'threshold' indicates whether the correct SNP cluster is among the top 'threshold number' of query hits. For instance, a threshold of 25 indicates that the correct cluster is among the top 25 hits. Our findings indicate that _Salmonella_ demonstrated a 70% success rate in having the true cluster within the top 25 hits while _Campylobacter_ showed a success rate of approximately 90%. 
 
 # Discussion
 
