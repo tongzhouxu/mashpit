@@ -20,9 +20,9 @@ authors:
     affiliation: "1, 2"
     orcid: 0000-0002-2533-9161
 affiliations:
- - name: Center for Food Safety, University of Georgia, Griffin, GA, USA
+ - name: Center for Food Safety, University of Georgia, Griffin, GA, United States of America
    index: 1
- - name: Enteric Diseases Laboratory Branch (EDLB), Centers for Disease Control and Prevention, Atlanta, GA, USA
+ - name: Enteric Diseases Laboratory Branch (EDLB), Centers for Disease Control and Prevention, Atlanta, GA, United States of America
    index: 2
 date: 7 Aug 2024
 bibliography: paper.bib
@@ -112,7 +112,7 @@ In conclusion, we believe that Mashpit is an essential genomic epidemiology tool
 
 # Acknowledgements
 
-Financial support for the development of Mashpit was provided by the Center for Food Safety at the University of Georgia, USA.
+Financial support for the development of Mashpit was provided by the Center for Food Safety at the University of Georgia, United States of America.
 The findings and conclusions in this report are those of the authors and do not necessarily represent the official position of the Centers for Disease Control and Prevention.
 
 # References

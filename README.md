@@ -4,7 +4,7 @@
 [![License: GPL v2](https://img.shields.io/badge/License-GPL_v2-blue.svg)](https://www.gnu.org/licenses/old-licenses/gpl-2.0.en.html)
 [![PyPI release](https://img.shields.io/pypi/v/mashpit)](https://pypi.python.org/pypi/mashpit/)
 
-Create a database of mash signatures and find the most similar genomes to a target sample 
+Create a database of mash signatures and find the most similar genomes to a target sample. To contribute, please see the contributing guidelines [here](CONTRIBUTING.md).
 
 
 ## Installation
