@@ -51,7 +51,7 @@ This method is quite comprehensive, but it relies on each sample being public, a
 Another approach is to provide new tools for decentralized and customized manipulation of genomics resources.
 We observed that an algorithm for genomics called Min-Hash is well positioned for this purpose.
 A commonly used software for Min-Hash is called Mash [@ondov2016mash].
-Querying with Mash can be about 3 orders of magnitude faster than other common methods like Basic Local Alignment Search Tool (BLAST) and can have a smaller disk footprint [@camacho2009blast].
+Querying with Mash can be about 4 orders of magnitude faster than other common methods like Basic Local Alignment Search Tool (BLAST) and can have a smaller disk footprint [@camacho2009blast;@topaz2018bmscan].
 Therefore it can be run on more common scientific workstations.
 
 We present Mashpit, a new rapid genomic epidemiology platform to query against these large groups of genomes on a local computer.
@@ -63,7 +63,7 @@ Currently, GISAID and NCBI are staying ahead of the curve by producing a global 
 This requires herculean efforts, cutting edge algorithms, and powerful computers.
 However, smaller laboratories usually have a scientific workstation or similar equipment, much different than a cluster computing system.
 
-We note that for some organisms like Salmonella, queries can be of a sensitive nature.
+We note that for some organisms like _Salmonella_, queries can be of a sensitive nature.
 For example, harboring isolates in food production environments that are related to outbreak isolates is often perceived as a potential liability by food establishments, therefore thwarting the efforts to use and share the genomes of these organisms.
 
 To address any needs for speed and sensitivity, we created Mashpit.
@@ -85,7 +85,7 @@ $$g_c=\underset{g_i∈G}{argmin}\sum_{j=1}^{n} d(g_i,g_j)$$
 Where $d(g_i,g_j)$ is the distance between two genomes.
 By default, Mashpit will download the latest SNP cluster for specified species and uses a kmer size of 31 and kmer number of 1000 for sketching the genomes. 
 
-To evaluate the performance of Mashpit, we tested Mashpit on a server that runs Ubuntu 20.04.2 with an Intel Xeon CPU E5-2697 v4 2.30GHz and 256GB RAM. The elapsed time of building a database and running a query was calculated for four of the major foodborne pathogens: _Salmonella_, _Listeria_, _E. coli_, and _Campylobactor_.
+To evaluate the performance of Mashpit, we tested Mashpit on a server that runs Ubuntu 20.04.2 with an Intel Xeon CPU E5-2697 v4 2.30GHz and 256GB RAM. The elapsed time of building a database and running a query was calculated for four of the major foodborne pathogens: _Salmonella_, _Listeria_, _E. coli_, and _Campylobacter_.
 
 
 With the database and its metadata complete, a user could perform a query.
@@ -95,7 +95,7 @@ All associated metadata are included in the spreadsheet.
 
 # Performance
 
-To evaluated the performance of Mashpit, we constructed Mashpit taxon databases for _Salmonella_, _Listeria_, _E. coli_, and _Campylobacter_ using NCBI pathogen detection SNP clusters versioned before January 2024. We randomly selected 1000 newly added genomes for each species added to NCBI pathogen detection after January 2024. Subsequently, we queried these genomes against Mahpit taxon databases and recorded the time taken for each step (\autoref{fig:figure}). We also compared the query results with the true SNP cluster of the query genomes. We calclated the proportion of true SNP clusters appearing among the top hits at various thresholds (\autoref{fig:figure}). The 'threshold' indicates whether the correct SNP cluster is among the top 'threshold number' of query hits. For instance, a threshold of 25 indicates that the correct cluster is among the top 25 hits. Our findings indicate that _Salmonella_ demonstrated a 70% success rate in having the true cluster within the top 25 hits while _Campylobacter_ showed a success rate of approximately 90%. 
+To evaluated the performance of Mashpit, we constructed Mashpit taxon databases for _Salmonella_, _Listeria_, _E. coli_, and _Campylobacter_ using NCBI pathogen detection SNP clusters versioned before January 2024. We randomly selected 1000 newly added genomes for each species added to NCBI pathogen detection after January 2024. Subsequently, we queried these genomes against Mahpit taxon databases and recorded the time taken for each step (\autoref{fig:figure}). We also compared the query results with the true SNP cluster of the query genomes. We calculated the proportion of true SNP clusters appearing among the top hits at various thresholds (\autoref{fig:figure}). The 'threshold' indicates whether the correct SNP cluster is among the top 'threshold number' of query hits. For instance, a threshold of 25 indicates that the correct cluster is among the top 25 hits. Our findings indicate that _Salmonella_ demonstrated a 70% success rate in having the true cluster within the top 25 hits while _Campylobacter_ showed a success rate of approximately 90%. 
 
 # Discussion
 
