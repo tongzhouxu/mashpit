@@ -159,6 +159,7 @@ mashpit webserver
 ```
 After running this command, a GUI interface will be deployed at 127.0.0.1:8080. Visit the link in your browser to start using the webserver. The webserver allows users to upload a query sample and select a database to query against. The results will be displayed in a table and a tree. A screenshot of the webserver is shown below:
 
-![screenshot](https://github.com/tongzhouxu/mashpit/blob/master/docs/img/mashpit_webserver.pdf)
+<img src="docs/img/mashpit_webserver.png" width="400">
+
 
 To note, a pre-built database is required to run the webserver. The database can be built using the `mashpit build` command.

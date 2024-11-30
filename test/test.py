@@ -210,15 +210,30 @@ class TestBuildTaxonAndQuery(unittest.TestCase):
             ]
         )
         expected_sqlite_sha = (
-            "3dd0e9f5112d633a0bb9ad1300028baabe253e70ed852a208396b317501b08e9"
+            "f361ea7b23ded17f69f9e128e16e3ea7cc8598845979bf72c9e07844f65a38d9"
         )
         expected_signature_sha = (
             "4dc90abc2935a70fc615ac0111a8a27fc506b25e858a29ec38c5e382790ebab8"
         )
+
+        conn = sqlite3.connect("test_listeria_innocua/test_listeria_innocua.db")
+        cursor = conn.cursor()
+
+        # Fetch column names and sort them
+        cursor.execute(f"PRAGMA table_info(METADATA);")
+        columns = [row[1] for row in cursor.fetchall()]
+        columns.sort()  # Ensure column order is deterministic
+
+        # Query the data with sorted columns and rows
+        sorted_columns = ", ".join(columns)
+        cursor.execute(f"SELECT {sorted_columns} FROM METADATA ORDER BY {sorted_columns}")
+        rows = cursor.fetchall()
+       
+        # Compute hash
         hasher = hashlib.sha256()
-        with open("test_listeria_innocua/test_listeria_innocua.db", "rb") as f:
-            buf = f.read()
-            hasher.update(buf)
+        for row in rows:
+            hasher.update(str(row).encode("utf-8"))  # Hash each row
+        conn.close()
         actual_sqlite_sha = hasher.hexdigest()
         hasher = hashlib.sha256()
         database_sig = load_file_as_signatures("test_listeria_innocua/test_listeria_innocua.sig")
@@ -297,15 +312,29 @@ class TestBuildAccession(unittest.TestCase):
         )
 
         expected_sqlite_sha = (
-            "f14ec35ef299b33d3cbcffe4d4a87e4a79cfb78dac0a5cebabf22e2d72852cfa"
+            "627e3cd4415e559bacde537c9ce60ee639c01f28c8a0bfca7365bdfa5573c8b0"
         )
         expected_signature_sha = (
             "2cdf077e256ada00a4d13e1cf5a22be945b713770da81b1de804ef2cc524b10b"
         )
+        conn = sqlite3.connect("test_accession/test_accession.db")
+        cursor = conn.cursor()
+
+        # Fetch column names and sort them
+        cursor.execute(f"PRAGMA table_info(METADATA);")
+        columns = [row[1] for row in cursor.fetchall()]
+        columns.sort()  # Ensure column order is deterministic
+
+        # Query the data with sorted columns and rows
+        sorted_columns = ", ".join(columns)
+        cursor.execute(f"SELECT {sorted_columns} FROM METADATA ORDER BY {sorted_columns}")
+        rows = cursor.fetchall()
+       
+        # Compute hash
         hasher = hashlib.sha256()
-        with open("test_accession/test_accession.db", "rb") as f:
-            buf = f.read()
-            hasher.update(buf)
+        for row in rows:
+            hasher.update(str(row).encode("utf-8"))  # Hash each row
+        conn.close()
         actual_sqlite_sha = hasher.hexdigest()
         hasher = hashlib.sha256()
         with open("test_accession/test_accession.sig", "rb") as f:
