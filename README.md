@@ -52,7 +52,6 @@ Mashpit database can be built using:
    A custom database is a collection of genomes based on a proveded biosample accesion list.
 
 ## Quick start 
-Here we use a small *Listeria innocua* pathogen detection 
 #### 1. Build a *Listeria innocua* database:
 PDG000000091.9 was versioned on 2022-07-29
 ```
@@ -160,6 +159,6 @@ mashpit webserver
 ```
 After running this command, a GUI interface will be deployed at 127.0.0.1:8080. Visit the link in your browser to start using the webserver. The webserver allows users to upload a query sample and select a database to query against. The results will be displayed in a table and a tree. A screenshot of the webserver is shown below:
 
-![screenshot](docs/mashpit_webserver.pdf)
+![screenshot](https://github.com/tongzhouxu/mashpit/blob/master/docs/img/mashpit_webserver.pdf)
 
 To note, a pre-built database is required to run the webserver. The database can be built using the `mashpit build` command.

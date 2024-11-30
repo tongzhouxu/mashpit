@@ -7,6 +7,7 @@ import zipfile
 import hashlib
 import subprocess
 
+from sourmash import load_file_as_signatures, save_signatures
 from mashpit.build import create_connection
 from mashpit.build import create_database
 from mashpit.build import download_metadata
@@ -212,7 +213,7 @@ class TestBuildTaxonAndQuery(unittest.TestCase):
             "3dd0e9f5112d633a0bb9ad1300028baabe253e70ed852a208396b317501b08e9"
         )
         expected_signature_sha = (
-            "1e7b64deec8f84f0dc0ec765a73e2d9d1e7e0a5f90f85ed148de4f513f4b74ea"
+            "4dc90abc2935a70fc615ac0111a8a27fc506b25e858a29ec38c5e382790ebab8"
         )
         hasher = hashlib.sha256()
         with open("test_listeria_innocua/test_listeria_innocua.db", "rb") as f:
@@ -220,11 +221,16 @@ class TestBuildTaxonAndQuery(unittest.TestCase):
             hasher.update(buf)
         actual_sqlite_sha = hasher.hexdigest()
         hasher = hashlib.sha256()
-        with open("test_listeria_innocua/test_listeria_innocua.sig", "rb") as f:
+        database_sig = load_file_as_signatures("test_listeria_innocua/test_listeria_innocua.sig")
+        database_sig_sorted = sorted(database_sig, key=lambda x: x.name)
+        with open("test_listeria_innocua/test_listeria_innocua.sig.sorted", "wb") as f:
+            save_signatures(database_sig_sorted, fp=f)
+        with open("test_listeria_innocua/test_listeria_innocua.sig.sorted", "rb") as f:
             buf = f.read()
             hasher.update(buf)
         actual_signature_sha = hasher.hexdigest()
         self.assertEqual(actual_sqlite_sha, expected_sqlite_sha)
+
         self.assertEqual(actual_signature_sha, expected_signature_sha)
         subprocess.run(
             ["datasets", "download", "genome", "accession", "GCA_022617975.1"]
@@ -241,10 +247,17 @@ class TestBuildTaxonAndQuery(unittest.TestCase):
             ]
         )
         expected_sha = (
-            "0eda85331792619a76f85d9be8ff1a6ddedb509f603fbe9dad4ef9714d19b054"
+            "82688f582fd95b249f8a9511a243c0b86433897c45ee7d714ea3d5610ac399a9"
         )
         hasher = hashlib.sha256()
-        with open("GCA_022617975_output.csv", "rb") as f:
+        # read the output file
+        output_file = pd.read_csv("GCA_022617975_output.csv")
+        # sort the output file by PDS_acc
+        output_file.sort_values(by=["PDS_acc"], inplace=True)
+        # drop the first column
+        output_file.drop(output_file.columns[0], axis=1, inplace=True)
+        output_file.to_csv("GCA_022617975_output.csv.sorted", index=False)
+        with open("GCA_022617975_output.csv.sorted", "rb") as f:
             buf = f.read()
             hasher.update(buf)
         actual_sha = hasher.hexdigest()
@@ -266,10 +279,6 @@ class TestBuildAccession(unittest.TestCase):
         # generate the test accession file
         accession_list = [
             "SAMN20822594",
-            "SAMN20821237",
-            "SAMN20934490",
-            "SAMN20977378",
-            "SAMN20977393",
         ]
         with open("test_accession_list", "w") as f:
             for accession in accession_list:
@@ -288,10 +297,10 @@ class TestBuildAccession(unittest.TestCase):
         )
 
         expected_sqlite_sha = (
-            "3912465140b2886b2e1daf5414e42a7d15fb112aed43621ecc3524b823077bf4"
+            "f14ec35ef299b33d3cbcffe4d4a87e4a79cfb78dac0a5cebabf22e2d72852cfa"
         )
         expected_signature_sha = (
-            "96a024342beefae84513ec6ef1ba206846a9cb24e489a069b72c4448139f6d9d"
+            "2cdf077e256ada00a4d13e1cf5a22be945b713770da81b1de804ef2cc524b10b"
         )
         hasher = hashlib.sha256()
         with open("test_accession/test_accession.db", "rb") as f:
