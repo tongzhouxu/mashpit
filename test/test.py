@@ -6,6 +6,7 @@ import shutil
 import zipfile
 import hashlib
 import subprocess
+import signal
 
 from sourmash import load_file_as_signatures, save_signatures
 from mashpit.build import create_connection
@@ -226,9 +227,11 @@ class TestBuildTaxonAndQuery(unittest.TestCase):
 
         # Query the data with sorted columns and rows
         sorted_columns = ", ".join(columns)
-        cursor.execute(f"SELECT {sorted_columns} FROM METADATA ORDER BY {sorted_columns}")
+        cursor.execute(
+            f"SELECT {sorted_columns} FROM METADATA ORDER BY {sorted_columns}"
+        )
         rows = cursor.fetchall()
-       
+
         # Compute hash
         hasher = hashlib.sha256()
         for row in rows:
@@ -236,7 +239,9 @@ class TestBuildTaxonAndQuery(unittest.TestCase):
         conn.close()
         actual_sqlite_sha = hasher.hexdigest()
         hasher = hashlib.sha256()
-        database_sig = load_file_as_signatures("test_listeria_innocua/test_listeria_innocua.sig")
+        database_sig = load_file_as_signatures(
+            "test_listeria_innocua/test_listeria_innocua.sig"
+        )
         database_sig_sorted = sorted(database_sig, key=lambda x: x.name)
         with open("test_listeria_innocua/test_listeria_innocua.sig.sorted", "wb") as f:
             save_signatures(database_sig_sorted, fp=f)
@@ -327,9 +332,11 @@ class TestBuildAccession(unittest.TestCase):
 
         # Query the data with sorted columns and rows
         sorted_columns = ", ".join(columns)
-        cursor.execute(f"SELECT {sorted_columns} FROM METADATA ORDER BY {sorted_columns}")
+        cursor.execute(
+            f"SELECT {sorted_columns} FROM METADATA ORDER BY {sorted_columns}"
+        )
         rows = cursor.fetchall()
-       
+
         # Compute hash
         hasher = hashlib.sha256()
         for row in rows:
@@ -381,6 +388,33 @@ class TestCompareTables(unittest.TestCase):
         self.assertEqual(asm_acc_remove, ["asm3", "asm2"])
         self.assertEqual(pds_to_add, ["PDS_002", "PDS_004"])
         self.assertEqual(asm_acc_add, ["asm2", "asm4"])
+
+
+class TestMashpitWebserver(unittest.TestCase):
+    def test_webserver_runs(self):
+        """Test if the `mashpit webserver` command runs without issues."""
+        # Start the webserver as a subprocess
+        process = subprocess.Popen(
+            ["mashpit", "webserver"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
+        try:
+            # Wait for a few seconds to see if it crashes
+            return_code = process.poll()
+            if return_code is not None:
+                # If the process exits early, capture stderr
+                stdout, stderr = process.communicate()
+                self.fail(
+                    f"`mashpit webserver` exited early with code {return_code}:\n"
+                    f"STDOUT: {stdout.decode()}\n"
+                    f"STDERR: {stderr.decode()}"
+                )
+        finally:
+            # Terminate the subprocess after the test
+            os.kill(process.pid, signal.SIGTERM)
+            process.wait()
 
 
 if __name__ == "__main__":

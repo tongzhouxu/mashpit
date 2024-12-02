@@ -2,7 +2,7 @@
 title: 'Mashpit: sketching out genomic epidemiology'
 tags:
   - Python
-  - Min-hash 
+  - MinHash 
   - Mash
   - Sourmash
   - Outbreak
@@ -33,7 +33,7 @@ bibliography: paper.bib
 
 We are in the era of genomic epidemiology.
 The surveillance of many transmissible diseases is increasingly being conducted through whole genome sequencing of pathogenic agents. 
-One notable example is _Salmonella_, a major foodborne pathogen routinely sequenced by surveillance programs such as PulseNet. 
+One notable example is _Salmonella_, a major foodborne pathogen routinely sequenced by surveillance programs such as PulseNet [@swaminathan2001pulsenet]. 
 Large volumes of _Salmonella_ genomes from these programs are deposited in database systems including NCBI [@nadon2017pulsenet]. 
 These publicly available genomes can be analyzed in a variety of ways such as serotyping [@zhang2019seqsero2],
 multilocus sequence typing (MLST) [@zhou2020enterobase], and single nucleotide polymorphism (SNP) typing [@katz2017comparative].
@@ -49,8 +49,8 @@ About once a day, it compares all genomes of a given taxon, separates all genome
 This method is quite comprehensive, but it relies on each sample being public, and it cannot be executed locally.
 
 Another approach is to provide new tools for decentralized and customized manipulation of genomics resources.
-We observed that an algorithm for genomics called Min-Hash is well positioned for this purpose.
-A commonly used software for Min-Hash is called Mash [@ondov2016mash].
+We observed that an algorithm for genomics called MinHash is well positioned for this purpose.
+A commonly used software for MinHash is called Mash [@ondov2016mash].
 Querying with Mash can be about 4 orders of magnitude faster than other common methods like Basic Local Alignment Search Tool (BLAST) and can have a smaller disk footprint [@camacho2009blast;@topaz2018bmscan].
 Therefore it can be run on more common scientific workstations.
 
@@ -59,8 +59,8 @@ We present Mashpit, a new rapid genomic epidemiology platform to query against t
 # Statement of need 
 
 Querying a sample against these magnitudes of genomes is becoming less sustainable, especially for smaller laboratories.
-Currently, GISAID and NCBI are staying ahead of the curve by producing a global tree of each organism every day.
-This requires herculean efforts, cutting edge algorithms, and powerful computers.
+Currently, GISAID and NCBI are staying ahead of the curve by producing a global tree of each organism every day [@shu2017gisaid].
+This requires herculean efforts, cutting-edge algorithms, and powerful computers.
 However, smaller laboratories usually have a scientific workstation or similar equipment, much different than a cluster computing system.
 
 We note that for some organisms like _Salmonella_, queries can be of a sensitive nature.
@@ -71,7 +71,7 @@ Mashpit queries genomes locally using Mash, thereby achieving speedy results whi
 
 # Mashpit design
 
-Mashpit is comprised of three major parts: A min-hash database, its associated metadata, and the min-hash querying.
+Mashpit is comprised of three major parts: A MinHash database, its associated metadata, and the MinHash querying.
 
 The database is created with an interface to Mash, called Sourmash [@Brown2016].
 Each genome is imported by sketching it and adding it to a Sourmash signature database.
@@ -83,26 +83,38 @@ where n is the number of genomes in the cluster.
 The centroid genome $g_c$ is calculated as:
 $$g_c=\underset{g_i∈G}{argmin}\sum_{j=1}^{n} d(g_i,g_j)$$
 Where $d(g_i,g_j)$ is the distance between two genomes.
-By default, Mashpit will download the latest SNP cluster for specified species and uses a kmer size of 31 and kmer number of 1000 for sketching the genomes. 
-
-To evaluate the performance of Mashpit, we tested Mashpit on a server that runs Ubuntu 20.04.2 with an Intel Xeon CPU E5-2697 v4 2.30GHz and 256GB RAM. The elapsed time of building a database and running a query was calculated for four of the major foodborne pathogens: _Salmonella_, _Listeria_, _E. coli_, and _Campylobacter_.
-
+The centroid genome represents the most central genome in each SNP cluster, reducing redundancy while retaining representative information for queries. By default, Mashpit will download the latest SNP cluster for specified species and uses a kmer size of 31 and kmer number of 1000 for sketching the genomes. 
 
 With the database and its metadata complete, a user could perform a query.
 The query is an assembly fasta file, which is then sketched and compared against the signature database.
 The query then returns a tab delimited spreadsheet, sorted by Mash distance and a phylogenetic tree based on the Mash distance.
 All associated metadata are included in the spreadsheet.
 
-# Performance
+Mashpit also provides a webserver interface for users to query the database. 
+The webserver is built using Flask and can be run locally or deployed on a server. 
+The webserver provides a user-friendly interface for users to upload their query genomes and view the results.
 
-To evaluated the performance of Mashpit, we constructed Mashpit taxon databases for _Salmonella_, _Listeria_, _E. coli_, and _Campylobacter_ using NCBI pathogen detection SNP clusters versioned before January 2024. We randomly selected 1000 newly added genomes for each species added to NCBI pathogen detection after January 2024. Subsequently, we queried these genomes against Mahpit taxon databases and recorded the time taken for each step (\autoref{fig:figure}). We also compared the query results with the true SNP cluster of the query genomes. We calculated the proportion of true SNP clusters appearing among the top hits at various thresholds (\autoref{fig:figure}). The 'threshold' indicates whether the correct SNP cluster is among the top 'threshold number' of query hits. For instance, a threshold of 25 indicates that the correct cluster is among the top 25 hits. Our findings indicate that _Salmonella_ demonstrated a 70% success rate in having the true cluster within the top 25 hits while _Campylobacter_ showed a success rate of approximately 90%. 
+# Performance
+To evaluate the performance of Mashpit, we tested Mashpit on a server that runs Ubuntu 20.04.2 with an Intel Xeon CPU E5-2697 v4 2.30GHz and 256GB RAM. 
+The elapsed time of running a query was calculated for four of the major foodborne pathogens: _Salmonella_, _Listeria_, _E. coli_, and _Campylobacter_. 
+We used NCBI pathogen detection SNP clusters that were versioned before January 2024. We then randomly selected 1000 newly added genomes for each species added to NCBI pathogen detection after January 2024. 
+Subsequently, we queried these genomes against Mashpit taxon databases and recorded the time taken for each step (\autoref{fig:figure}). 
+We also compared the query results with the true SNP cluster of the query genomes. 
+We calculated the proportion of true SNP clusters appearing among the top hits at various thresholds (\autoref{fig:figure}). 
+The 'threshold' indicates whether the correct SNP cluster is among the top 'threshold number' of query hits. 
+For instance, a threshold of 25 indicates that the correct cluster is among the top 25 hits. 
+Our findings indicate that _Salmonella_ demonstrated a 70% success rate in having the true cluster within the top 25 hits while _Campylobacter_ showed a success rate of approximately 90%. This variability reflects differences in how species are represented in the database and the limitations of MinHash-based methods for resolving closely related clusters.
+
+For _Salmonella_, which is the most frequently sequenced organism in NCBI Pathogen Detection, many closely related SNP clusters exist due to its extensive representation. Mash, being a MinHash-based method, operates at a resolution that is not always sufficient to distinguish fine-scale differences between these closely related clusters. 
+As a result, users analyzing _Salmonella_ should interpret Mashpit results as preliminary and consider following up with higher-resolution methods for definitive SNP cluster assignments.
 
 # Discussion
 
-We present Mashpit, a rapid genomic epidemiology platform.
-Due to the underlying algorithm Min-Hash, it is exceedingly fast.
-It also has such a small hard drive and computational footprint that it can basically be used on common scientific workstations.
-However, we note that the Mash distance does not correlate well to well-established distances such as MLST.
+Mashpit provides a fast and lightweight platform for genomic epidemiology. 
+Its MinHash-based approach enables rapid querying of large datasets on standard scientific workstations, addressing key challenges for laboratories with limited computational resources or privacy concerns.
+
+However, we note that the Mash distance does not correlate well to well-established distances such as MLST. And it has resolution limits when differentiating closely related clusters, particularly for species like _Salmonella_ that are highly represented in databases such as NCBI Pathogen Detection.
+
 Therefore we recommend that this platform is used as a first-pass to filter unrelated samples before using a more established protocol such as MLST.
 In conclusion, we believe that Mashpit is an essential genomic epidemiology tool.
 

@@ -622,7 +622,7 @@ def build_accession(args):
     for biosample in biosample_list:
         # if api key is not provided, wait for 1 second
         if args.key == None:
-            time.sleep(1)
+            time.sleep(3)
         # check if the assembly is available on NCBI
         esearch_handle = Entrez.esearch(db="assembly", term=biosample, retmax="3")
         esearch_record = Entrez.read(esearch_handle)
@@ -631,7 +631,7 @@ def build_accession(args):
             continue
         # get assembly accession
         if args.key == None:
-            time.sleep(1)
+            time.sleep(3)
         esummary_handle = Entrez.esummary(
             db="assembly", id=esearch_record["IdList"][0], report="full"
         )
@@ -641,13 +641,13 @@ def build_accession(args):
         ]
         gca_acc_list.append(asm_acc)
         # get metadata
-                # if api key is not provided, wait for 1 second
+        # if api key is not provided, wait for 1 second
         if args.key == None:
-            time.sleep(1)
+            time.sleep(3)
         esearch_handle = Entrez.esearch(db="biosample", term=biosample, retmax="3")
         esearch_record = Entrez.read(esearch_handle)
         if args.key == None:
-            time.sleep(1)
+            time.sleep(3)
         efetch_handle = Entrez.efetch(db="biosample", id=esearch_record["IdList"][0])
         efetch_record = efetch_handle.read()
         root = ET.fromstring(efetch_record)

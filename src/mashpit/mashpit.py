@@ -89,7 +89,7 @@ def commandToArgs(commandline):
         default=0.85,
     )
     subparser_query.add_argument(
-        "--annotation", type=str, help="mashtree tip annoatation, default is none"
+        "--annotation", type=str, help="mashtree tip annotation, default is none"
     )
     subparser_query.set_defaults(func=query.query)
 
