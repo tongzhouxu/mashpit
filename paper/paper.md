@@ -71,13 +71,13 @@ Mashpit queries genomes locally using Mash, thereby achieving speedy results whi
 
 # Mashpit design
 
-Mashpit is comprised of three major parts: A MinHash database, its associated metadata, and the MinHash querying.
+Mashpit consists of three major parts: A MinHash database, its associated metadata, and the MinHash querying.
 
 The database is created with an interface to Mash, called Sourmash [@Brown2016].
 Each genome is imported by sketching it and adding it to a Sourmash signature database.
 Each genome can also have an entry in the associated metadata.
 These data include date of isolation, geography, host age range, and other information that could be useful in an epidemiological investigation.
-Mashpit can build a species database from NCBI Pathogen Detection, termed a Mashpit taxon database or a custom database from user-provided genomes. The Mashpit taxon database is based on the available pathogen species on Pathogen Detection. For each SNP cluster of one species on Pathogen Detection, the set of all genomes in an SNP cluster is defined as:
+Mashpit can build a species database from NCBI Pathogen Detection, termed a Mashpit taxon database or a custom database from a list of biosample accessions. The Mashpit taxon database is based on the available pathogen species on Pathogen Detection. For each SNP cluster of one species on Pathogen Detection, the set of all genomes in an SNP cluster is defined as:
 $$G=\{g_1,g_2,…,g_n\}$$
 where n is the number of genomes in the cluster.
 The centroid genome $g_c$ is calculated as:
@@ -95,15 +95,14 @@ The webserver is built using Flask and can be run locally or deployed on a serve
 The webserver provides a user-friendly interface for users to upload their query genomes and view the results.
 
 # Performance
-To evaluate the performance of Mashpit, we tested Mashpit on a server that runs Ubuntu 20.04.2 with an Intel Xeon CPU E5-2697 v4 2.30GHz and 256GB RAM. 
-The elapsed time of running a query was calculated for four of the major foodborne pathogens: _Salmonella_, _Listeria_, _E. coli_, and _Campylobacter_. 
+To evaluate the performance of Mashpit, we tested Mashpit on a server that runs Ubuntu 20.04.2 with an Intel Xeon CPU E5-2697 v4 2.30GHz and 256GB RAM.
 We used NCBI pathogen detection SNP clusters that were versioned before January 2024. We then randomly selected 1000 newly added genomes for each species added to NCBI pathogen detection after January 2024. 
-Subsequently, we queried these genomes against Mashpit taxon databases and recorded the time taken for each step (\autoref{fig:figure}). 
+We measured the elapsed time for querying four major foodborne pathogens: _Salmonella_, _Listeria_, _E. coli_, and _Campylobacter_ (\autoref{fig:time_query}).
 We also compared the query results with the true SNP cluster of the query genomes. 
-We calculated the proportion of true SNP clusters appearing among the top hits at various thresholds (\autoref{fig:figure}). 
+We calculated the proportion of true SNP clusters appearing among the top hits at various thresholds (\autoref{fig:accuracy}). 
 The 'threshold' indicates whether the correct SNP cluster is among the top 'threshold number' of query hits. 
 For instance, a threshold of 25 indicates that the correct cluster is among the top 25 hits. 
-Our findings indicate that _Salmonella_ demonstrated a 70% success rate in having the true cluster within the top 25 hits while _Campylobacter_ showed a success rate of approximately 90%. This variability reflects differences in how species are represented in the database and the limitations of MinHash-based methods for resolving closely related clusters.
+Our findings indicate that _Salmonella_ achieved a 70% success rate for true clusters appearing within the top 25 hits, compared to approximately 90% for _Campylobacter_. This variability reflects differences in how species are represented in the database and the limitations of MinHash-based methods for resolving closely related clusters.
 
 For _Salmonella_, which is the most frequently sequenced organism in NCBI Pathogen Detection, many closely related SNP clusters exist due to its extensive representation. Mash, being a MinHash-based method, operates at a resolution that is not always sufficient to distinguish fine-scale differences between these closely related clusters. 
 As a result, users analyzing _Salmonella_ should interpret Mashpit results as preliminary and consider following up with higher-resolution methods for definitive SNP cluster assignments.
@@ -113,14 +112,16 @@ As a result, users analyzing _Salmonella_ should interpret Mashpit results as pr
 Mashpit provides a fast and lightweight platform for genomic epidemiology. 
 Its MinHash-based approach enables rapid querying of large datasets on standard scientific workstations, addressing key challenges for laboratories with limited computational resources or privacy concerns.
 
-However, we note that the Mash distance does not correlate well to well-established distances such as MLST. And it has resolution limits when differentiating closely related clusters, particularly for species like _Salmonella_ that are highly represented in databases such as NCBI Pathogen Detection.
+However, we note that the Mash distance does not correlate well with established distances such as Average Nucleotide Identity (ANI) for closely related genomes [@jain2018high]. Therefore it has resolution limits when differentiating closely related clusters, particularly for species like _Salmonella_ that are highly represented in databases such as NCBI Pathogen Detection.
 
 Therefore we recommend that this platform is used as a first-pass to filter unrelated samples before using a more established protocol such as MLST.
 In conclusion, we believe that Mashpit is an essential genomic epidemiology tool.
 
 # Figures
 
-![Performance of Mashpit query. A. Average time of a query against four Mashpit taxon databases. B. Rate of true SNP clusters in top rate with different thresholds. \label{fig:figure}](figure.png)
+![Average query time for four Mashpit taxon databases. \label{fig:time_query}](figure_1.png){ width=100% }
+
+![Probability of the true SNP cluster being included among the highest-ranking hits at varying thresholds. \label{fig:accuracy}](figure_2.png){ width=60% }
 
 # Acknowledgements
 
