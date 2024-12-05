@@ -36,12 +36,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: release-dists
-          path: mashpit/dist/
-      - name: troubleshooting
-        run: |
-          pwd
-          ls -la
-          ls -la dist
+          path: dist/
+
 
   pypi-publish:
     runs-on: ubuntu-latest
