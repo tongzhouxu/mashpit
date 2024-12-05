@@ -26,17 +26,15 @@ jobs:
         with:
           python-version: "3.8"
 
-      - name: Build release distributions
-        run: |
-          # NOTE: put your own distribution build steps here.
-          python -m pip install build
-          python -m pip install .
+      - name: Install dependencies for building
+        run: pip install build
 
-      - name: Upload distributions
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-dists
-          path: dist/
+      - name: Build release distributions
+        run: python -m build
+
+      - name: Debug dist directory
+        run: ls -la dist/
+
 
   pypi-publish:
     runs-on: ubuntu-latest
