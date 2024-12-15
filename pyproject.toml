@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = 'mashpit'
-version = '0.9.8'
+version = '0.9.9'
 description = 'A sketch-based surveillance platform'
 authors = [
     {name = "Tongzhou Xu", email = "tongzhou.xu@uga.edu"}
