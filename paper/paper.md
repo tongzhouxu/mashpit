@@ -40,11 +40,11 @@ multilocus sequence typing (MLST) [@zhou2020enterobase], and single nucleotide p
 These analyses provide important laboratory evidence for outbreak surveillance and investigation.
 
 As of August 2024, there are more than 600 thousand _Salmonella_ genomes and more than half a million other pathogen genomes at NCBI Pathogen Detection (https://www.ncbi.nlm.nih.gov/pathogens).
-These numbers are expected to increase dramatically and therefore faster methods are needed.
+These numbers are expected to increase dramatically and therefore faster analysis methods are needed.
 
 There have been some major advances to scale up bioinformatic analyses to large volumes of pathogenic genomes.
 One approach is to provide centralized resources that integrate data and analytical tools.
-For example, Pathogen Detection combines information from three databases: SRA, GenBank, and BioSample.
+For example, NCBI Pathogen Detection combines information from three databases: SRA, GenBank, and BioSample.
 About once a day, it compares all genomes of a given taxon, separates all genomes into individual clusters using MLST, and then creates a phylogeny for each cluster using SNP analysis.
 This method is quite comprehensive, but it relies on each sample being public, and it cannot be executed locally.
 
@@ -77,17 +77,17 @@ The database is created with an interface to Mash, called Sourmash [@Brown2016].
 Each genome is imported by sketching it and adding it to a Sourmash signature database.
 Each genome can also have an entry in the associated metadata.
 These data include date of isolation, geography, host age range, and other information that could be useful in an epidemiological investigation.
-Mashpit can build a species database from NCBI Pathogen Detection, termed a Mashpit taxon database or a custom database from a list of biosample accessions. The Mashpit taxon database is based on the available pathogen species on Pathogen Detection. For each SNP cluster of one species on Pathogen Detection, the set of all genomes in an SNP cluster is defined as:
+Mashpit can build a species database from NCBI Pathogen Detection, termed a Mashpit taxon database, or a custom database from a list of biosample accessions. For each SNP cluster of one species on NCBI Pathogen Detection, the set of all genomes is defined as:
 $$G=\{g_1,g_2,…,g_n\}$$
 where n is the number of genomes in the cluster.
 The centroid genome $g_c$ is calculated as:
 $$g_c=\underset{g_i∈G}{argmin}\sum_{j=1}^{n} d(g_i,g_j)$$
-Where $d(g_i,g_j)$ is the distance between two genomes.
+where $d(g_i,g_j)$ is the distance between two genomes.
 The centroid genome represents the most central genome in each SNP cluster, reducing redundancy while retaining representative information for queries. By default, Mashpit will download the latest SNP cluster for specified species and uses a kmer size of 31 and kmer number of 1000 for sketching the genomes. 
 
 With the database and its metadata complete, a user could perform a query.
 The query is an assembly fasta file, which is then sketched and compared against the signature database.
-The query then returns a tab delimited spreadsheet, sorted by Mash distance and a phylogenetic tree based on the Mash distance.
+The query then returns a tab delimited spreadsheet, sorted by Mash distance, and a phylogenetic tree based on the Mash distance.
 All associated metadata are included in the spreadsheet.
 
 Mashpit also provides a webserver interface for users to query the database. 
@@ -95,8 +95,8 @@ The webserver is built using Flask and can be run locally or deployed on a serve
 The webserver provides a user-friendly interface for users to upload their query genomes and view the results.
 
 # Performance
-To evaluate the performance of Mashpit, we tested Mashpit on a server that runs Ubuntu 20.04.2 with an Intel Xeon CPU E5-2697 v4 2.30GHz and 256GB RAM.
-We used NCBI pathogen detection SNP clusters that were versioned before January 2024. We then randomly selected 1000 newly added genomes for each species added to NCBI pathogen detection after January 2024. 
+To evaluate the performance of Mashpit, we tested it on a server that runs Ubuntu 20.04.2 with an Intel Xeon CPU E5-2697 v4 2.30GHz and 256GB RAM.
+We used NCBI Pathogen Detection SNP clusters that were versioned before January 2024. We then randomly selected 1000 newly added genomes for each species added to NCBI Pathogen Detection after January 2024. 
 We measured the elapsed time for querying four major foodborne pathogens: _Salmonella_, _Listeria_, _E. coli_, and _Campylobacter_ (\autoref{fig:time_query}).
 We also compared the query results with the true SNP cluster of the query genomes. 
 We calculated the proportion of true SNP clusters appearing among the top hits at various thresholds (\autoref{fig:accuracy}). 
