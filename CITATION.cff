@@ -1,0 +1,46 @@
+cff-version: "1.2.0"
+authors:
+- family-names: Xu
+  given-names: Tongzhou
+  orcid: "https://orcid.org/0000-0002-3829-8688"
+- family-names: Bakker
+  given-names: Henk C.
+  name-particle: den
+  orcid: "https://orcid.org/0000-0002-4086-1580"
+- family-names: Deng
+  given-names: Xiangyu
+  orcid: "https://orcid.org/0000-0002-7251-2529"
+- family-names: Katz
+  given-names: Lee S.
+  orcid: "https://orcid.org/0000-0002-2533-9161"
+doi: 10.5281/zenodo.14498037
+message: If you use this software, please cite our article in the
+  Journal of Open Source Software.
+preferred-citation:
+  authors:
+  - family-names: Xu
+    given-names: Tongzhou
+    orcid: "https://orcid.org/0000-0002-3829-8688"
+  - family-names: Bakker
+    given-names: Henk C.
+    name-particle: den
+    orcid: "https://orcid.org/0000-0002-4086-1580"
+  - family-names: Deng
+    given-names: Xiangyu
+    orcid: "https://orcid.org/0000-0002-7251-2529"
+  - family-names: Katz
+    given-names: Lee S.
+    orcid: "https://orcid.org/0000-0002-2533-9161"
+  date-published: 2024-12-17
+  doi: 10.21105/joss.07306
+  issn: 2475-9066
+  issue: 104
+  journal: Journal of Open Source Software
+  publisher:
+    name: Open Journals
+  start: 7306
+  title: "Mashpit: sketching out genomic epidemiology"
+  type: article
+  url: "https://joss.theoj.org/papers/10.21105/joss.07306"
+  volume: 9
+title: "Mashpit: sketching out genomic epidemiology"

@@ -1,4 +1,5 @@
 # Mashpit
+[![DOI](https://joss.theoj.org/papers/10.21105/joss.07306/status.svg)](https://doi.org/10.21105/joss.07306)
 [![install with bioconda](https://img.shields.io/badge/install%20with-bioconda-brightgreen.svg?style=flat)](http://bioconda.github.io/recipes/mashpit/README.html)
 ![unittest](https://github.com/tongzhouxu/mashpit/actions/workflows/python-app.yml/badge.svg)
 [![License: GPL v2](https://img.shields.io/badge/License-GPL_v2-blue.svg)](https://www.gnu.org/licenses/old-licenses/gpl-2.0.en.html)
@@ -169,6 +170,9 @@ After running this command, a GUI interface will be deployed at 127.0.0.1:8080. 
 
 
 To note, a pre-built database is required to run the webserver. The database can be built using the `mashpit build` command.
+
+## Citation
+Xu et al., (2024). Mashpit: sketching out genomic epidemiology. Journal of Open Source Software, 9(104), 7306, https://doi.org/10.21105/joss.07306
 
 ## Contributing
 To contribute, please see the contributing guidelines [here](CONTRIBUTING.md).
