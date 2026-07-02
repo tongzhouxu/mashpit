@@ -1,113 +1,189 @@
 #!/usr/bin/env python3
-import sys
+
 import argparse
+import sys
 
 from mashpit import __version__
 from mashpit import build
-from mashpit import update
 from mashpit import query
 from mashpit import webserver
 
 
+def positive_int(value):
+    value = int(value)
+    if value < 1:
+        raise argparse.ArgumentTypeError("value must be at least 1")
+    return value
+
+
+def nonnegative_float(value):
+    value = float(value)
+    if value < 0:
+        raise argparse.ArgumentTypeError("value must be non-negative")
+    return value
+
+
 def commandToArgs(commandline):
     parser = argparse.ArgumentParser(
-        description="A sketch-based surveillance platform."
+        description="A lightweight, sketch-based genomic surveillance platform."
     )
     parser.add_argument(
-        "-v", "--version", action="version", version="%(prog)s " + __version__
+        "-v",
+        "--version",
+        action="version",
+        version="%(prog)s " + __version__,
     )
 
-    # subparsers for mashpit
-    subparsers = parser.add_subparsers(metavar="command")
+    subparsers = parser.add_subparsers(dest="command", metavar="command")
     subparsers.required = True
-    subparser_build = subparsers.add_parser("build", help="Build mashpit database")
-    subparser_update = subparsers.add_parser("update", help="Update a database")
+
+    subparser_build = subparsers.add_parser(
+        "build",
+        help="Build a Mashpit database",
+    )
     subparser_query = subparsers.add_parser(
-        "query", help="Query for the most similar isolates"
+        "query",
+        help="Query for the most similar isolates",
     )
     subparser_webserver = subparsers.add_parser(
-        "webserver", help="Start a local web server"
+        "webserver",
+        help="Start a local web server",
     )
 
-    # arguments for mashpit build
+    # Build arguments
     subparser_build.add_argument(
-        "type", type=str, help="mashpit database type", choices=["taxon", "accession"]
+        "type",
+        choices=["taxon", "accession"],
+        help="database type",
     )
-    subparser_build.add_argument("name", type=str, help="mashpit database name")
-    subparser_build.add_argument("--quiet", action="store_true", help="disable logs")
+    subparser_build.add_argument(
+        "name",
+        help="database name",
+    )
+    subparser_build.add_argument(
+        "--quiet",
+        action="store_true",
+        help="disable console logs",
+    )
     subparser_build.add_argument(
         "--number",
-        type=int,
+        type=positive_int,
         default=1000,
-        help="maximum number of hashes for sourmash, default is 1000",
+        help="maximum number of hashes for sourmash (default: 1000)",
     )
     subparser_build.add_argument(
-        "--ksize", type=int, default=31, help="kmer size for sourmash, default is 31"
+        "--ksize",
+        type=positive_int,
+        default=31,
+        help="k-mer size for sourmash (default: 31)",
     )
-    subparser_build.add_argument("--species", type=str, help="species name")
-    subparser_build.add_argument("--email", type=str, help="Entrez email")
-    subparser_build.add_argument("--key", type=str, help="Entrez api key")
+    subparser_build.add_argument(
+        "--species",
+        help="NCBI Pathogen Detection taxon name; required for taxon builds",
+    )
+    subparser_build.add_argument(
+        "--email",
+        help="Entrez email; required for accession builds",
+    )
+    subparser_build.add_argument(
+        "--key",
+        help="NCBI API key",
+    )
     subparser_build.add_argument(
         "--pd_version",
-        type=str,
-        help="a specified Pathogen Detection version (PDG accession). Default is the latest.",
+        help="Pathogen Detection release accession; default is the latest release",
     )
     subparser_build.add_argument(
-        "--list", type=str, help="Path to a list of NCBI BioSample accessions"
+        "--list",
+        help="path to a file containing NCBI BioSample accessions",
+    )
+    subparser_build.add_argument(
+        "--radius",
+        type=nonnegative_float,
+        default=20.0,
+        help=(
+            "maximum SNP-tree distance from an isolate to its representative "
+            "for taxon builds (default: 20)"
+        ),
+    )
+    subparser_build.add_argument(
+        "--download-attempts",
+        dest="download_attempts",
+        type=positive_int,
+        default=3,
+        help="maximum assembly download attempts (default: 3)",
+    )
+    subparser_build.add_argument(
+        "--download-batch-size",
+        dest="download_batch_size",
+        type=positive_int,
+        default=500,
+        help="number of assemblies per NCBI Datasets batch (default: 500)",
+    )
+    subparser_build.add_argument(
+        "--retry-delay",
+        dest="retry_delay",
+        type=nonnegative_float,
+        default=5.0,
+        help="seconds between assembly download attempts (default: 5)",
+    )
+    subparser_build.add_argument(
+        "--max-reselection-rounds",
+        dest="max_reselection_rounds",
+        type=positive_int,
+        default=5,
+        help=(
+            "maximum representative reselection rounds after unavailable "
+            "assemblies are excluded (default: 5)"
+        ),
     )
     subparser_build.set_defaults(func=build.build)
 
-    # "update" subcommand
-    # TODO: remove the name argument? because the name is already in the database folder
-    subparser_update.add_argument(
-        dest="database", type=str, help="path for the database folder"
-    )
-    subparser_update.add_argument(dest="name", type=str, help="database name")
-    subparser_update.add_argument(
-        "--metadata", type=str, help="metadata file in csv format"
-    )
-    subparser_update.add_argument("--quiet", action="store_true", help="disable logs")
-    subparser_update.set_defaults(func=update.update)
-
-    # "query" subcommand
+    # Query arguments
     subparser_query.add_argument(
-        dest="sample", type=str, help="file path to the query sample"
+        "sample",
+        help="path to the query assembly",
     )
     subparser_query.add_argument(
-        dest="database", type=str, help="path to the database folder"
+        "database",
+        help="path to the database folder",
     )
     subparser_query.add_argument(
         "--number",
-        type=int,
-        help="number of isolates in the query output, default is 200",
+        type=positive_int,
         default=200,
+        help="number of isolates in the query output (default: 200)",
     )
     subparser_query.add_argument(
         "--threshold",
         type=float,
-        help="minimum jaccard similarity for mashtree, default is 0.85",
         default=0.85,
+        help="minimum Jaccard similarity for mashtree (default: 0.85)",
     )
     subparser_query.add_argument(
-        "--annotation", type=str, help="mashtree tip annotation, default is none"
+        "--annotation",
+        help="metadata field used to annotate mashtree tips",
     )
     subparser_query.set_defaults(func=query.query)
 
-    # "webserver" subcommand
+    # Webserver arguments
     subparser_webserver.set_defaults(func=webserver.webserver)
 
-    args = parser.parse_args(commandline)
-    return args
+    return parser.parse_args(commandline)
 
 
 def main():
-    if len(sys.argv[1:]) < 1:
+    if len(sys.argv) == 1:
         print(
-            "Subcommand is required to run mashpit. Use -h or --help to show help information.\n"
+            "Subcommand is required to run mashpit. "
+            "Use -h or --help to show help information.\n"
         )
         print("Subcommand options:\n")
+        return
 
-        exit(0)
     args = commandToArgs(sys.argv[1:])
     args.func(args)
-    return
+
+
+if __name__ == "__main__":
+    main()
