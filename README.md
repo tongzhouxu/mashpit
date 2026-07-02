@@ -24,11 +24,11 @@ Mashpit is designed for offline or resource-limited analysis, including deployme
 - **Local visualization:** Produce a query result table and a tree showing the relationship between the query and its closest database representatives.
 - **Offline operation:** After a database has been built, routine queries can be performed without uploading genomic data.
 
-## Mashpit 2.0 database design
+## Mashpit 1.0 database design
 
 An NCBI Pathogen Detection taxon database contains many SNP clusters. A single representative is not sufficient for every cluster because cluster size and within-cluster diversity vary substantially.
 
-Mashpit 2.0 therefore uses an adaptive tree-based strategy:
+Mashpit 1.0 therefore uses an adaptive tree-based strategy:
 
 1. Download the selected NCBI Pathogen Detection metadata and SNP trees.
 2. Remove records that do not have a valid assembly accession.
@@ -140,7 +140,7 @@ mashpit build accession custom_database --list biosamples.txt
 
 ### Tree-radius option
 
-Mashpit 2.0 can optionally use a tree-radius threshold during representative selection. A smaller radius generally selects more representatives and gives denser coverage of within-cluster diversity. A larger radius selects fewer representatives and produces a smaller database.
+Mashpit 1.0 can optionally use a tree-radius threshold during representative selection. A smaller radius generally selects more representatives and gives denser coverage of within-cluster diversity. A larger radius selects fewer representatives and produces a smaller database.
 
 Use the radius option only after evaluating an appropriate value for the organism and intended surveillance resolution.
 
@@ -207,7 +207,7 @@ Optional custom metadata can be supplied as a CSV file:
 mashpit update path/to/database salmonella --metadata metadata.csv
 ```
 
-Because representative selection may change as SNP trees grow, a Mashpit 2.0 update may add, remove, or replace representatives rather than only appending new genomes.
+Because representative selection may change as SNP trees grow, a Mashpit 1.0 update may add, remove, or replace representatives rather than only appending new genomes.
 
 ## Local web interface
 
@@ -241,7 +241,7 @@ Mashpit should not be used as the sole evidence for declaring or excluding an ou
 
 ## Development status
 
-Mashpit 2.0 replaces the previous fixed one-representative-per-cluster strategy with adaptive tree-based representative selection. Current development priorities include:
+Mashpit 1.0 replaces the previous fixed one-representative-per-cluster strategy with adaptive tree-based representative selection. Current development priorities include:
 
 - full-background discrimination benchmarking;
 - validation across large SNP clusters;
@@ -261,4 +261,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development and contribution guidelin
 
 ## License
 
-Mashpit is distributed under the GNU General Public License v2.0. See [LICENSE](LICENSE).
+Mashpit is distributed under the GNU General Public License v1.0. See [LICENSE](LICENSE).
