@@ -463,11 +463,23 @@ def select_tree_representatives(tree_path, cluster_rows, radius, excluded):
     return [row_by_key[key] for key in selected]
 
 
-def select_all_representatives(eligible, tree_paths, radius, exclusions, round_number):
+def select_all_representatives(
+    eligible,
+    tree_paths,
+    radius,
+    exclusions,
+    round_number,
+    pds_filter=None,
+):
     representatives = []
     cluster_summary = []
 
+    if pds_filter is not None:
+        pds_filter = set(pds_filter)
+        eligible = eligible[eligible["PDS_acc"].isin(pds_filter)].copy()
+
     grouped = eligible.groupby("PDS_acc", sort=True)
+    total_clusters = len(grouped)
 
     for index, (pds_acc, cluster_rows) in enumerate(grouped, start=1):
         tree_path = tree_paths.get(pds_acc)
@@ -513,8 +525,8 @@ def select_all_representatives(eligible, tree_paths, radius, exclusions, round_n
                 }
             )
 
-        if index % 100 == 0:
-            logging.info("Selected representatives for %d clusters", index)
+        if index % 100 == 0 or index == total_clusters:
+            logging.info("Selected representatives for %d/%d clusters", index, total_clusters)
 
     return pd.DataFrame(representatives), pd.DataFrame(cluster_summary)
 
@@ -777,6 +789,18 @@ def write_build_tables(tmp_folder, representatives, cluster_summary, unavailable
             writer.writerow([accession, errors.get(accession, "")])
 
 
+def replace_cluster_rows(table, replacement, affected_clusters):
+    if table is None or table.empty:
+        kept = pd.DataFrame()
+    else:
+        kept = table[~table["PDS_acc"].isin(affected_clusters)].copy()
+
+    if replacement is None or replacement.empty:
+        return kept.reset_index(drop=True)
+
+    return pd.concat([kept, replacement], ignore_index=True)
+
+
 def build_taxon(args):
     db_folder, tmp_folder, conn = prepare(args)
 
@@ -807,26 +831,22 @@ def build_taxon(args):
     verified = {}
     attempt_counts = defaultdict(int)
     all_errors = {}
-    final_representatives = pd.DataFrame()
-    final_summary = pd.DataFrame()
 
     assembly_root = tmp_folder / "assemblies"
 
+    representatives, cluster_summary = select_all_representatives(
+        eligible,
+        tree_paths,
+        radius,
+        exclusions,
+        round_number=1,
+    )
+
+    if representatives.empty:
+        raise RuntimeError("No representatives could be selected")
+
     for round_number in range(1, max_reselection_rounds + 1):
-        representatives, cluster_summary = select_all_representatives(
-            eligible,
-            tree_paths,
-            radius,
-            exclusions,
-            round_number,
-        )
-
-        if representatives.empty:
-            raise RuntimeError("No representatives could be selected")
-
-        needed = sorted(
-            set(representatives["asm_acc"]) - set(verified)
-        )
+        needed = sorted(set(representatives["asm_acc"]) - set(verified))
 
         newly_verified, failed, attempts, errors = download_representatives(
             needed,
@@ -849,11 +869,50 @@ def build_taxon(args):
             final_summary = cluster_summary
             break
 
-        logging.warning(
-            "%d selected assemblies remained unavailable after retries",
-            len(failed),
+        affected_clusters = set(
+            representatives.loc[
+                representatives["asm_acc"].isin(failed),
+                "PDS_acc",
+            ]
         )
+
+        logging.warning(
+            "%d selected assemblies remained unavailable after retries; "
+            "reselecting representatives for %d affected clusters",
+            len(failed),
+            len(affected_clusters),
+        )
+
         exclusions.update(failed)
+
+        if round_number == max_reselection_rounds:
+            raise RuntimeError(
+                "Representative selection did not stabilize after %d rounds"
+                % max_reselection_rounds
+            )
+
+        reselected, reselected_summary = select_all_representatives(
+            eligible,
+            tree_paths,
+            radius,
+            exclusions,
+            round_number=round_number + 1,
+            pds_filter=affected_clusters,
+        )
+
+        representatives = replace_cluster_rows(
+            representatives,
+            reselected,
+            affected_clusters,
+        )
+        cluster_summary = replace_cluster_rows(
+            cluster_summary,
+            reselected_summary,
+            affected_clusters,
+        )
+
+        if representatives.empty:
+            raise RuntimeError("No representatives remain after reselection")
 
     else:
         raise RuntimeError(
@@ -930,7 +989,6 @@ def build_taxon(args):
     logging.info("Database complete: %s", db_folder)
     logging.info("Final representatives: %d", len(final_representatives))
     logging.info("Unavailable assemblies excluded: %d", len(exclusions))
-
 
 def fetch_accession_metadata(biosample, email, api_key):
     Entrez.email = email
