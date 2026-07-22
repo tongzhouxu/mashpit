@@ -66,6 +66,57 @@ def generate_query_table(conn, sorted_asm_similarity_dict):
     return output_df
 
 
+def generate_cluster_table(conn, representative_df, hash_number, tie_tolerance_hashes=2):
+    # Groups the per-representative hits by SNP cluster (PDS_acc) so that
+    # multiple representatives supporting the same cluster show up as one
+    # row instead of scattered duplicates. hits_in_results/
+    # total_representatives let a reader judge how much of that evidence is
+    # real (similarity-backed) versus how large the cluster's representative
+    # set happens to be; ranking itself always stays on best_similarity_score
+    # - representative count is context, never a substitute ranking key.
+    #
+    # near_top is defined relative to the sketch's own resolution
+    # (1 / hash_number) rather than a fixed similarity cutoff: at the default
+    # hash_number=1000, a 0.001 gap is a single hash of difference and within
+    # normal MinHash sampling noise, so a fixed threshold like 0.85 can't
+    # tell "genuinely behind" apart from "statistically tied for best".
+    grouped = (
+        representative_df.groupby("PDS_acc")["similarity_score"]
+        .agg(
+            hits_in_results="count",
+            best_similarity_score="max",
+            mean_similarity_score="mean",
+            min_similarity_score="min",
+        )
+        .reset_index()
+    )
+
+    total_counts = pd.read_sql_query(
+        "SELECT PDS_acc, COUNT(*) AS total_representatives "
+        "FROM REPRESENTATIVE GROUP BY PDS_acc",
+        conn,
+    )
+    cluster_df = grouped.merge(total_counts, on="PDS_acc", how="left")
+
+    overall_best_score = representative_df["similarity_score"].max()
+    tolerance = tie_tolerance_hashes / hash_number
+    cluster_df["similarity_gap_from_best"] = (
+        cluster_df["best_similarity_score"] - overall_best_score
+    )
+    cluster_df["near_top"] = cluster_df["similarity_gap_from_best"] >= -tolerance
+
+    cluster_df["SNP_tree_link"] = cluster_df["PDS_acc"].map(
+        lambda pds: f"https://www.ncbi.nlm.nih.gov/pathogens/isolates/#{pds}"
+    )
+
+    cluster_df = cluster_df.sort_values(
+        by=["best_similarity_score", "hits_in_results", "PDS_acc"],
+        ascending=[False, False, True],
+    ).reset_index(drop=True)
+
+    return cluster_df
+
+
 def generate_mashtree(
     output_df, min_similarity, query_name, sig_path, added_annotation, database_sig
 ):
@@ -96,7 +147,7 @@ def generate_mashtree(
     matrix = []
     # first row
     first_row = [0]
-    for similarity_score in output_df[output_df["similarity_score"] >= 0.85][
+    for similarity_score in output_df[output_df["similarity_score"] >= min_similarity][
         "similarity_score"
     ].to_list():
         first_row.append(1 - similarity_score)
@@ -238,7 +289,16 @@ def query(args):
     )
 
     output_df = generate_query_table(conn, sorted_asm_similarity_dict)
-    output_df.to_csv(query_name + "_output.csv", index=True)
+    output_df.to_csv(query_name + "_representative_matches.csv", index=True)
+
+    c.execute("SELECT value FROM DESC WHERE name = 'Type';")
+    db_type = c.fetchone()[0]
+    if db_type == "Taxonomy":
+        cluster_df = generate_cluster_table(
+            conn, output_df, hash_number, args.tie_tolerance_hashes
+        )
+        cluster_df.to_csv(query_name + "_cluster_candidates.csv", index=True)
+
     generate_mashtree(
         output_df, min_similarity, query_name, sig_path, added_annotation, database_sig
     )

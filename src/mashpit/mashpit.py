@@ -5,8 +5,8 @@ import sys
 
 from mashpit import __version__
 from mashpit import build
+from mashpit import gui
 from mashpit import query
-from mashpit import webserver
 
 
 def positive_int(value):
@@ -45,9 +45,9 @@ def commandToArgs(commandline):
         "query",
         help="Query for the most similar isolates",
     )
-    subparser_webserver = subparsers.add_parser(
-        "webserver",
-        help="Start a local web server",
+    subparser_gui = subparsers.add_parser(
+        "gui",
+        help="Launch the Streamlit GUI",
     )
 
     # Build arguments
@@ -164,10 +164,26 @@ def commandToArgs(commandline):
         "--annotation",
         help="metadata field used to annotate mashtree tips",
     )
+    subparser_query.add_argument(
+        "--tie-tolerance-hashes",
+        dest="tie_tolerance_hashes",
+        type=positive_int,
+        default=2,
+        help=(
+            "sketch hashes of similarity slack used to flag a cluster as "
+            "statistically tied with the top hit in the cluster candidates "
+            "table, for taxon databases (default: 2)"
+        ),
+    )
     subparser_query.set_defaults(func=query.query)
 
-    # Webserver arguments
-    subparser_webserver.set_defaults(func=webserver.webserver)
+    # GUI arguments
+    subparser_gui.add_argument(
+        "--port",
+        type=positive_int,
+        help="port for the Streamlit server (default: Streamlit's own default, 8501)",
+    )
+    subparser_gui.set_defaults(func=gui.gui)
 
     return parser.parse_args(commandline)
 

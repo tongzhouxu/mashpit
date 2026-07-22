@@ -306,7 +306,9 @@ def safe_extract_tar(archive, destination):
     destination = Path(destination).resolve()
     for member in archive.getmembers():
         target = (destination / member.name).resolve()
-        if not str(target).startswith(str(destination) + os.sep):
+        if target != destination and not str(target).startswith(
+            str(destination) + os.sep
+        ):
             raise RuntimeError("Unsafe path in archive: %s" % member.name)
     archive.extractall(str(destination))
 
@@ -372,6 +374,13 @@ def load_tree_graph(tree_path):
             if length is None:
                 length = 0.0
             length = float(length)
+            if length < 0:
+                logging.warning(
+                    "Negative branch length %.6g in %s; clamping to 0.0",
+                    length,
+                    tree_path,
+                )
+                length = 0.0
             adjacency[parent].append((child, length))
             adjacency[child].append((parent, length))
 
@@ -405,14 +414,21 @@ def select_tree_representatives(tree_path, cluster_rows, radius, excluded):
     row_by_key = {}
     node_by_key = {}
 
-    for _, row in cluster_rows.iterrows():
+    for _, row in cluster_rows.sort_values("asm_acc").iterrows():
         asm_acc = row["asm_acc"]
         key = row["target_key"]
         if asm_acc in excluded or key not in terminal_by_key:
             continue
-        if key not in row_by_key:
-            row_by_key[key] = row
-            node_by_key[key] = terminal_by_key[key]
+        if key in row_by_key:
+            logging.debug(
+                "Tree tip %s matched by multiple assemblies; keeping %s, dropping %s",
+                key,
+                row_by_key[key]["asm_acc"],
+                asm_acc,
+            )
+            continue
+        row_by_key[key] = row
+        node_by_key[key] = terminal_by_key[key]
 
     keys = sorted(row_by_key)
     if not keys:
@@ -766,6 +782,49 @@ def insert_metadata(conn, metadata, representatives, radius, verified, attempts)
     conn.commit()
 
 
+def insert_accession_metadata(conn, accession_to_biosample, verified):
+    columns = [
+        "biosample_acc",
+        "taxid",
+        "strain",
+        "collected_by",
+        "collection_date",
+        "geo_loc_name",
+        "isolation_source",
+        "lat_lon",
+        "serovar",
+        "sub_species",
+        "species",
+        "genus",
+        "host",
+        "host_disease",
+        "outbreak",
+        "srr",
+        "PDT_acc",
+        "PDS_acc",
+        "asm_acc",
+    ]
+
+    for accession in sorted(verified):
+        values = {column: "missing" for column in columns}
+        values["asm_acc"] = accession
+        values["biosample_acc"] = accession_to_biosample.get(accession, "missing")
+
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO METADATA (
+                biosample_acc, taxid, strain, collected_by, collection_date,
+                geo_loc_name, isolation_source, lat_lon, serovar, sub_species,
+                species, genus, host, host_disease, outbreak, srr, PDT_acc,
+                PDS_acc, asm_acc
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [values[column] for column in columns],
+        )
+
+    conn.commit()
+
+
 def write_build_tables(tmp_folder, representatives, cluster_summary, unavailable, errors):
     representatives.to_csv(
         tmp_folder / "representatives.tsv",
@@ -845,7 +904,8 @@ def build_taxon(args):
     if representatives.empty:
         raise RuntimeError("No representatives could be selected")
 
-    for round_number in range(1, max_reselection_rounds + 1):
+    reselection_round = 0
+    while True:
         needed = sorted(set(representatives["asm_acc"]) - set(verified))
 
         newly_verified, failed, attempts, errors = download_representatives(
@@ -885,18 +945,20 @@ def build_taxon(args):
 
         exclusions.update(failed)
 
-        if round_number == max_reselection_rounds:
+        if reselection_round == max_reselection_rounds:
             raise RuntimeError(
-                "Representative selection did not stabilize after %d rounds"
+                "Representative selection did not stabilize after %d reselection rounds"
                 % max_reselection_rounds
             )
+
+        reselection_round += 1
 
         reselected, reselected_summary = select_all_representatives(
             eligible,
             tree_paths,
             radius,
             exclusions,
-            round_number=round_number + 1,
+            round_number=reselection_round + 1,
             pds_filter=affected_clusters,
         )
 
@@ -913,12 +975,6 @@ def build_taxon(args):
 
         if representatives.empty:
             raise RuntimeError("No representatives remain after reselection")
-
-    else:
-        raise RuntimeError(
-            "Representative selection did not stabilize after %d rounds"
-            % max_reselection_rounds
-        )
 
     missing_final = set(final_representatives["asm_acc"]) - set(verified)
     if missing_final:
@@ -1027,6 +1083,7 @@ def build_accession(args):
     ]
 
     accessions = []
+    accession_to_biosample = {}
     for biosample in biosamples:
         accession = fetch_accession_metadata(
             biosample,
@@ -1035,6 +1092,7 @@ def build_accession(args):
         )
         if accession:
             accessions.append(accession)
+            accession_to_biosample[accession] = biosample
 
     verified, failed, attempts, errors = download_representatives(
         accessions,
@@ -1056,6 +1114,8 @@ def build_accession(args):
         args.ksize,
     )
     merge_signatures(args, db_folder, signature_paths)
+
+    insert_accession_metadata(conn, accession_to_biosample, verified)
 
     conn.executemany(
         "INSERT OR REPLACE INTO DESC(name, value) VALUES (?, ?)",

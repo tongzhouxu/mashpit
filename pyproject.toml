@@ -24,7 +24,8 @@ dependencies = [
     "flask ~= 3.0.3",
     "dask[dataframe] ~= 2023.5.0",
     "psutil ~= 6.1.0",
-    "phytreeviz ~= 0.2.0"
+    "phytreeviz ~= 0.2.0",
+    "streamlit ~= 1.40.1"
 ]
 
 [project.scripts]
@@ -32,6 +33,3 @@ mashpit = "mashpit.mashpit:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
-
-[tool.setuptools.package-data]
-mashpit = ["static/*", "templates/*"]
