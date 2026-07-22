@@ -193,37 +193,27 @@ A query produces:
 
 Mashpit results are intended for rapid screening and prioritization. They do not replace validated SNP-pipeline, cgMLST, or whole-genome phylogenetic analyses when formal outbreak confirmation is required.
 
-## Updating a database
-
-A taxon database can be updated to a newer NCBI Pathogen Detection release:
-
-```bash
-mashpit update path/to/database salmonella
-```
-
-Optional custom metadata can be supplied as a CSV file:
-
-```bash
-mashpit update path/to/database salmonella --metadata metadata.csv
-```
-
-Because representative selection may change as SNP trees grow, a Mashpit 1.0 update may add, remove, or replace representatives rather than only appending new genomes.
-
-## Local web interface
+## Graphical interface
 
 Start the local Mashpit interface with:
 
 ```bash
-mashpit webserver
+mashpit gui
 ```
 
-Then open:
+This launches a Streamlit app and opens it in your browser, by default at:
 
 ```text
-http://127.0.0.1:8080
+http://localhost:8501
 ```
 
-The interface allows users to upload a query assembly, select a local database, run the search, and inspect the result table and tree.
+Use `--port` to run on a different port:
+
+```bash
+mashpit gui --port 8888
+```
+
+The interface lets users select a local database, upload a query assembly, run the search, and inspect the result table and tree - all without the genome or results leaving the local machine.
 
 A pre-built Mashpit database is required.
 
@@ -238,16 +228,6 @@ Mashpit is intended for fast, lightweight genomic screening, including:
 - prioritization of isolates for higher-resolution analysis.
 
 Mashpit should not be used as the sole evidence for declaring or excluding an outbreak relationship.
-
-## Development status
-
-Mashpit 1.0 replaces the previous fixed one-representative-per-cluster strategy with adaptive tree-based representative selection. Current development priorities include:
-
-- full-background discrimination benchmarking;
-- validation across large SNP clusters;
-- outbreak-strain benchmarks for *Salmonella*, *Listeria*, *Campylobacter*, and *Escherichia coli*;
-- performance testing on Raspberry Pi hardware;
-- a simplified local graphical interface.
 
 ## Citation
 

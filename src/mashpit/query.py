@@ -43,7 +43,7 @@ def generate_query_table(conn, sorted_asm_similarity_dict):
 
     for i in sorted_asm_similarity_dict:
         sql_query = pd.read_sql_query(
-            f"SELECT * FROM METADATA WHERE asm_acc = '{i}'", conn
+            "SELECT * FROM METADATA WHERE asm_acc = ?", conn, params=(i,)
         )
         df_query = pd.DataFrame(sql_query, columns=names)
         df_query["similarity_score"] = sorted_asm_similarity_dict[i]

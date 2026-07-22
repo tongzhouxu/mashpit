@@ -21,9 +21,6 @@ dependencies = [
     "biopython ~= 1.83",
     "scikit-bio ~= 0.6.2",
     "tqdm ~= 4.67.0",
-    "flask ~= 3.0.3",
-    "dask[dataframe] ~= 2023.5.0",
-    "psutil ~= 6.1.0",
     "phytreeviz ~= 0.2.0",
     "streamlit ~= 1.40.1"
 ]

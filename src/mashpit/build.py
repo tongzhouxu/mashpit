@@ -1046,16 +1046,26 @@ def build_taxon(args):
     logging.info("Final representatives: %d", len(final_representatives))
     logging.info("Unavailable assemblies excluded: %d", len(exclusions))
 
+# NCBI E-utilities asks for no more than ~3 requests/second without an API
+# key, and allows ~10 requests/second with one; fetch_accession_metadata
+# issues two requests per call, so pause between them at that rate to avoid
+# NCBI throttling or temporarily banning the client mid-build.
+ENTREZ_REQUEST_DELAY_NO_KEY = 0.34
+ENTREZ_REQUEST_DELAY_WITH_KEY = 0.1
+
+
 def fetch_accession_metadata(biosample, email, api_key):
     Entrez.email = email
     if api_key:
         Entrez.api_key = api_key
+    delay = ENTREZ_REQUEST_DELAY_WITH_KEY if api_key else ENTREZ_REQUEST_DELAY_NO_KEY
 
     search = Entrez.esearch(db="assembly", term=biosample, retmax="1")
     record = Entrez.read(search)
     if not record["IdList"]:
         return None
 
+    time.sleep(delay)
     summary = Entrez.esummary(
         db="assembly",
         id=record["IdList"][0],
@@ -1082,14 +1092,19 @@ def build_accession(args):
         if line.strip()
     ]
 
+    api_key = getattr(args, "key", None)
+    delay = ENTREZ_REQUEST_DELAY_WITH_KEY if api_key else ENTREZ_REQUEST_DELAY_NO_KEY
+
     accessions = []
     accession_to_biosample = {}
-    for biosample in biosamples:
-        accession = fetch_accession_metadata(
-            biosample,
-            args.email,
-            getattr(args, "key", None),
-        )
+    for index, biosample in enumerate(biosamples):
+        if index > 0:
+            time.sleep(delay)
+        try:
+            accession = fetch_accession_metadata(biosample, args.email, api_key)
+        except Exception as error:
+            logging.error("Entrez lookup failed for %s: %s", biosample, error)
+            continue
         if accession:
             accessions.append(accession)
             accession_to_biosample[accession] = biosample

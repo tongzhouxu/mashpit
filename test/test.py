@@ -20,6 +20,7 @@ from sourmash import MinHash, SourmashSignature, load_file_as_signatures, save_s
 from mashpit import build as build_module
 from mashpit import gui as gui_module
 from mashpit import query as query_module
+from mashpit.streamlit_app import safe_filename, validate_database
 from mashpit.build import (
     create_connection,
     create_database,
@@ -1152,6 +1153,54 @@ class TestBuildAccession(unittest.TestCase):
         actual_signature_sha = hasher.hexdigest()
         self.assertEqual(actual_sqlite_sha, expected_sqlite_sha)
         self.assertEqual(actual_signature_sha, expected_signature_sha)
+
+
+class TestSafeFilename(unittest.TestCase):
+    # Covers the sanitization streamlit_app.run_query relies on before
+    # writing an uploaded assembly's name to a path on disk.
+    def test_strips_directory_components(self):
+        self.assertEqual(safe_filename("../../etc/genome.fasta"), "genome.fasta")
+        self.assertEqual(safe_filename("C:\\Users\\me\\genome.fasta"), "genome.fasta")
+
+    def test_replaces_unsafe_characters(self):
+        self.assertEqual(safe_filename("my genome (1).fa"), "my_genome__1_.fa")
+
+    def test_empty_result_falls_back_to_default(self):
+        self.assertEqual(safe_filename("../../"), "query.fasta")
+
+
+class TestValidateDatabase(unittest.TestCase):
+    def test_rejects_blank_input(self):
+        database, error = validate_database("   ")
+        self.assertIsNone(database)
+        self.assertIn("Select a Mashpit database", error)
+
+    def test_rejects_missing_directory(self):
+        database, error = validate_database("/no/such/mashpit/database/dir")
+        self.assertIsNone(database)
+        self.assertIn("does not exist", error)
+
+    def test_rejects_directory_without_matching_db_and_sig(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            database, error = validate_database(tmp)
+            self.assertIsNone(database)
+            self.assertIn("exactly one .db and one .sig", error)
+
+    def test_rejects_mismatched_basenames(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "one.db").touch()
+            (Path(tmp) / "two.sig").touch()
+            database, error = validate_database(tmp)
+            self.assertIsNone(database)
+            self.assertIn("do not match", error)
+
+    def test_accepts_matching_db_and_sig(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "salmonella.db").touch()
+            (Path(tmp) / "salmonella.sig").touch()
+            database, error = validate_database(tmp)
+            self.assertIsNone(error)
+            self.assertEqual(database, Path(tmp).expanduser().resolve())
 
 
 class TestMashpitGui(unittest.TestCase):
