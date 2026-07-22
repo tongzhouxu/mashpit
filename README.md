@@ -87,15 +87,18 @@ mashpit --help
 
 ## Database contents
 
-A Mashpit database is stored in a directory containing the sketch database, representative metadata, and build information. Depending on the Mashpit version, the directory includes files such as:
+A Mashpit database is stored in a directory containing the sketch database and its metadata. Depending on the database type, it includes files such as:
 
 ```text
 DATABASE_NAME/
-├── DATABASE_NAME.db
-├── DATABASE_NAME.sig
-├── representative metadata
-└── build logs
+├── DATABASE_NAME.db               # sqlite metadata and representative tables
+├── DATABASE_NAME.sig              # merged sourmash signatures
+├── representatives.tsv            # taxon databases only
+├── cluster_summary.tsv            # taxon databases only
+└── unavailable_assemblies.tsv     # accessions that could not be downloaded
 ```
+
+The build log itself (`mashpit-<timestamp>.log`) is written to the current working directory alongside the database folder, not inside it.
 
 Keep the entire database directory together when moving it to another computer.
 
@@ -132,15 +135,19 @@ SAMN00000002
 SAMN00000003
 ```
 
-Then run:
+Then run (an Entrez email is required to resolve BioSample accessions via NCBI):
 
 ```bash
-mashpit build accession custom_database --list biosamples.txt
+mashpit build accession custom_database --list biosamples.txt --email you@example.com
 ```
 
 ### Tree-radius option
 
-Mashpit 1.0 can optionally use a tree-radius threshold during representative selection. A smaller radius generally selects more representatives and gives denser coverage of within-cluster diversity. A larger radius selects fewer representatives and produces a smaller database.
+Mashpit 1.0 can optionally use a tree-radius threshold during representative selection, via `--radius` (default `20`, in the same units as the SNP tree's branch lengths). A smaller radius generally selects more representatives and gives denser coverage of within-cluster diversity. A larger radius selects fewer representatives and produces a smaller database:
+
+```bash
+mashpit build taxon salmonella --species Salmonella --radius 10
+```
 
 Use the radius option only after evaluating an appropriate value for the organism and intended surveillance resolution.
 
@@ -161,9 +168,10 @@ mashpit query sample.fasta path/to/database
 Common query options include:
 
 ```text
---number       maximum number of database matches returned
---threshold    minimum similarity used when constructing the local result tree
---annotation   metadata field used to annotate tree tips
+--number                 maximum number of database matches returned
+--threshold              minimum similarity used when constructing the local result tree
+--annotation             metadata field used to annotate tree tips
+--tie-tolerance-hashes   sketch-hash tolerance used to flag near-top SNP clusters (taxon databases only)
 ```
 
 Example:
@@ -179,15 +187,19 @@ mashpit query sample.fasta path/to/salmonella \
 
 A query produces:
 
-1. **Result table**
+1. **Representative-matches table**
 
-   A CSV file containing the closest representatives and associated metadata. Results include fields such as BioSample accession, assembly accession, SNP-cluster accession, similarity score, and NCBI links.
+   A CSV file (`<query>_representative_matches.csv`) containing the closest representatives and associated metadata. Results include fields such as BioSample accession, assembly accession, SNP-cluster accession, similarity score, and NCBI links.
 
-2. **Local tree**
+2. **Cluster-candidates table** (taxon databases only)
 
-   Newick and image files showing the query genome together with its closest database representatives.
+   A CSV file (`<query>_cluster_candidates.csv`) that groups the representative matches by SNP cluster, ranked by best similarity score. A `near_top` column flags clusters whose best hit is within `--tie-tolerance-hashes` sketch hashes of the single best hit overall, since at typical sketch sizes a small similarity gap can be within normal MinHash sampling noise rather than a meaningful difference.
 
-3. **Log file**
+3. **Local tree**
+
+   Newick and image files (`<query>_tree.newick`, `<query>_tree.png`) showing the query genome together with its closest database representatives above the similarity threshold. The tree is skipped (with a log message) when the top hit falls below `--threshold` or fewer than two candidates qualify.
+
+4. **Log file**
 
    A timestamped record of the query parameters and processing steps.
 
@@ -241,4 +253,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development and contribution guidelin
 
 ## License
 
-Mashpit is distributed under the GNU General Public License v1.0. See [LICENSE](LICENSE).
+Mashpit is distributed under the GNU General Public License v2.0. See [LICENSE](LICENSE).
