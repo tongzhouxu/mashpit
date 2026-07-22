@@ -6,6 +6,7 @@ import ntpath
 import screed
 import sourmash
 import heapq
+import tempfile
 import time
 import pandas as pd
 
@@ -22,15 +23,19 @@ from sourmash import (
 )
 
 
-def get_query_sig(query_path, query_name, hash_number, kmer_size):
-    genome = query_path
+class MashtreeSkipped(Exception):
+    pass
+
+
+def get_query_sig(query_path, query_name, hash_number, kmer_size, output_dir):
     mh = sourmash.MinHash(n=hash_number, ksize=kmer_size)
-    for record in screed.open(genome):
+    for record in screed.open(query_path):
         mh.add_sequence(record.sequence, True)
-    sig = SourmashSignature(mh, name=genome)
-    query_sig_path = os.path.join(os.path.dirname(query_path), f"{query_name}.sig")
+    sig = SourmashSignature(mh, name=query_path)
+    query_sig_path = os.path.join(output_dir, f"{query_name}.sig")
     with open(query_sig_path, "wt") as fp:
         save_signatures([sig], fp)
+    return query_sig_path
 
 
 def generate_query_table(conn, sorted_asm_similarity_dict):
@@ -122,20 +127,18 @@ def generate_mashtree(
 ):
     # check if the top query similarity is smaller than the threshold
     if float(output_df["similarity_score"].iloc[0]) < min_similarity:
-        logging.error(
+        raise MashtreeSkipped(
             "Top query similarity is smaller than the threshold. Mashtree can not be generated. "
         )
-        exit(1)
     # select top results that are above the threshold
     acc_list = output_df[output_df["similarity_score"] >= min_similarity][
         "asm_acc"
     ].to_list()
     # if the number of top results is smaller than 2, mashtree can not be generated
     if len(acc_list) < 2:
-        logging.error(
+        raise MashtreeSkipped(
             "Number of top results is smaller than 2. Mashtree can not be generated. "
         )
-        exit(1)
     leaves = [query_name] + acc_list
     # select database signatures that are present in acc_list
     sigs = []
@@ -174,10 +177,10 @@ def generate_mashtree(
         annotated_leaves = []
         for leaf in leaves:
             if leaf in acc_list:
-                added_annotation = str(
+                annotation_value = str(
                     output_df[output_df["asm_acc"] == leaf][added_annotation].iloc[0]
                 )
-                leaf = leaf + " " + added_annotation
+                leaf = leaf + " " + annotation_value
             annotated_leaves.append(leaf)
         dm = DistanceMatrix(matrix, annotated_leaves)
         newick_str = nj(dm, result_constructor=str)
@@ -250,10 +253,15 @@ def query(args):
     c.execute("SELECT value FROM DESC where name = 'Kmer_size';")
     kmer_size = int(c.fetchone()[0])
 
-    # sketch the query sample and load the signature
-    get_query_sig(query_path, query_name, hash_number, kmer_size)
-    query_sig_path = os.path.join(os.path.dirname(query_path), f"{query_name}.sig")
-    query_sig = load_one_signature(query_sig_path)
+    # Sketch the query sample and load the signature. Written to a private
+    # temp directory rather than beside the input assembly, so a read-only
+    # or shared input location doesn't break the query and no stray file of
+    # the same name there is ever touched.
+    with tempfile.TemporaryDirectory(prefix="mashpit-query-sketch-") as sketch_dir:
+        query_sig_path = get_query_sig(
+            query_path, query_name, hash_number, kmer_size, sketch_dir
+        )
+        query_sig = load_one_signature(query_sig_path)
 
     time_finish_sketch = time.time()
     logging.info(
@@ -299,8 +307,20 @@ def query(args):
         )
         cluster_df.to_csv(query_name + "_cluster_candidates.csv", index=True)
 
-    generate_mashtree(
-        output_df, min_similarity, query_name, sig_path, added_annotation, database_sig
-    )
-    time_mashtree = time.time()
-    logging.info(f"Mashtree generated in {time_mashtree-time_sort:.2f} seconds")
+    # A skipped tree (top hit below threshold, or fewer than two qualifying
+    # hits) is a legitimate outcome, not a failure: the CSVs above are
+    # already valid and complete, so it must not turn into a non-zero exit
+    # for the whole query.
+    try:
+        generate_mashtree(
+            output_df,
+            min_similarity,
+            query_name,
+            sig_path,
+            added_annotation,
+            database_sig,
+        )
+        time_mashtree = time.time()
+        logging.info(f"Mashtree generated in {time_mashtree-time_sort:.2f} seconds")
+    except MashtreeSkipped as error:
+        logging.warning(str(error))

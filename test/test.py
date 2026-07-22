@@ -40,7 +40,22 @@ from mashpit.build import (
     validate_pathogen_name,
 )
 from mashpit.mashpit import commandToArgs
-from mashpit.query import generate_cluster_table, generate_mashtree, generate_query_table
+from mashpit.query import (
+    MashtreeSkipped,
+    generate_cluster_table,
+    generate_mashtree,
+    generate_query_table,
+)
+
+# Tests that hit live NCBI services (FTP downloads, Entrez, or a real
+# `mashpit build`/`datasets` genome download) are skipped by default so
+# `pytest test.py` stays fast and hermetic for every push/PR. The full
+# suite, including these, runs from the scheduled/manual
+# network-tests.yml workflow, which sets this variable.
+network_test = unittest.skipUnless(
+    os.environ.get("MASHPIT_RUN_NETWORK_TESTS") == "1",
+    "set MASHPIT_RUN_NETWORK_TESTS=1 to run tests that hit live NCBI services",
+)
 
 
 class TestCreateConnection(unittest.TestCase):
@@ -253,6 +268,7 @@ class TestSafeExtractTar(unittest.TestCase):
                 safe_extract_tar(archive, destination)
 
 
+@network_test
 class TestDownloadReleaseFiles(unittest.TestCase):
     # Replaces the old TestDownloadMetadata: `download_metadata` no longer
     # exists. build_taxon now resolves the release first, then downloads
@@ -366,6 +382,7 @@ class TestSelectTreeRepresentatives(unittest.TestCase):
         self.assertEqual(summary.loc[0, "status"], "complete")
 
 
+@network_test
 class TestRealClusterRepresentativeSelection(unittest.TestCase):
     # Same selection logic as TestSelectTreeRepresentatives, but against a
     # real, tiny NCBI Pathogen Detection SNP cluster instead of a synthetic
@@ -447,6 +464,7 @@ class TestRealClusterRepresentativeSelection(unittest.TestCase):
                 self.assertGreater(sig_path.stat().st_size, 0)
 
 
+@network_test
 class TestRealClusterMultiRepresentativeSelection(unittest.TestCase):
     # A second real fixture, chosen to be structurally different from
     # PDS000110997.1's flat 3-tip star: PDS000111058.1 is a real,
@@ -557,6 +575,7 @@ class TestRealMetadataPipeline(unittest.TestCase):
         self.assertEqual(geo_loc_name, "United Kingdom: United Kingdom")
 
 
+@network_test
 class TestFetchAccessionMetadata(unittest.TestCase):
     # Isolated coverage of fetch_accession_metadata, decoupled from the full
     # accession-build E2E test. SAMN20822594 is the same biosample
@@ -784,20 +803,46 @@ class TestGenerateMashtree(unittest.TestCase):
         self.assertTrue(Path(f"{self.query_name}_tree.newick").is_file())
         self.assertTrue(Path(f"{self.query_name}_tree.png").is_file())
 
-    def test_below_threshold_top_hit_exits(self):
+    def test_below_threshold_top_hit_raises_mashtree_skipped(self):
+        # A skipped tree is a legitimate outcome (not a crash): the caller
+        # (query.query) is expected to catch this and still exit 0, since
+        # the representative/cluster CSVs were already written by then.
         output_df = pd.DataFrame(
             {
                 "asm_acc": ["cand0", "cand1", "cand2", "cand3"],
                 "similarity_score": [0.9, 0.7, 0.6, 0.2],
             }
         )
-        with self.assertRaises(SystemExit):
+        with self.assertRaises(MashtreeSkipped):
             generate_mashtree(output_df, 0.95, self.query_name, "unused", None, self.sigs)
 
-    def test_fewer_than_two_qualifying_hits_exits(self):
+    def test_fewer_than_two_qualifying_hits_raises_mashtree_skipped(self):
         output_df = pd.DataFrame({"asm_acc": ["cand0"], "similarity_score": [0.9]})
-        with self.assertRaises(SystemExit):
+        with self.assertRaises(MashtreeSkipped):
             generate_mashtree(output_df, 0.5, self.query_name, "unused", None, self.sigs)
+
+    def test_annotation_with_multiple_hits(self):
+        # Regression test: added_annotation (the column name) used to be
+        # overwritten with the first leaf's annotation value, so the second
+        # leaf's lookup then used that value as a column name and raised
+        # KeyError. Any --annotation use with more than one qualifying hit
+        # (the common case, since this path requires at least two) crashed.
+        output_df = pd.DataFrame(
+            {
+                "asm_acc": ["cand0", "cand1", "cand2", "cand3"],
+                "similarity_score": [0.9, 0.7, 0.6, 0.2],
+                "isolation_source": ["water", "soil", "clinical", "food"],
+            }
+        )
+        generate_mashtree(
+            output_df, 0.5, self.query_name, "unused", "isolation_source", self.sigs
+        )
+        # Newick tip labels can't contain unquoted spaces, so the writer
+        # substitutes underscores for them.
+        newick_text = Path(f"{self.query_name}_tree.newick").read_text()
+        self.assertIn("cand0_water", newick_text)
+        self.assertIn("cand1_soil", newick_text)
+        self.assertIn("cand2_clinical", newick_text)
 
 
 class TestNegativeBranchLength(unittest.TestCase):
@@ -983,6 +1028,7 @@ class TestBuildTaxonReselection(unittest.TestCase):
         self.assertEqual(mock_download.call_count, 2)
 
 
+@network_test
 class TestBuildTaxonAndQuery(unittest.TestCase):
     def setUp(self):
         self.pathogen_name = "Listeria_innocua"
@@ -1098,7 +1144,25 @@ class TestBuildTaxonAndQuery(unittest.TestCase):
         actual_cluster_sha = hasher.hexdigest()
         self.assertEqual(actual_cluster_sha, expected_cluster_sha)
 
+        # Regression check: generate_mashtree used to call exit(1) when no
+        # hit clears --threshold, which made the whole `mashpit query`
+        # process exit non-zero even though the CSVs above were already
+        # written successfully. --threshold 1.01 is unreachable (max
+        # Jaccard similarity is 1.0), forcing that skip path here.
+        skip_result = subprocess.run(
+            [
+                "mashpit",
+                "query",
+                "ncbi_dataset/ncbi_dataset/data/GCA_022617975.1/GCA_022617975.1_PDT001269761.1_genomic.fna",
+                "test_listeria_innocua",
+                "--threshold",
+                "1.01",
+            ]
+        )
+        self.assertEqual(skip_result.returncode, 0)
 
+
+@network_test
 class TestBuildAccession(unittest.TestCase):
     def setUp(self):
         return

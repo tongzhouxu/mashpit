@@ -13,6 +13,7 @@ import time
 import urllib.request
 import zipfile
 from collections import defaultdict
+from contextlib import contextmanager
 from html.parser import HTMLParser
 from pathlib import Path
 
@@ -860,191 +861,223 @@ def replace_cluster_rows(table, replacement, affected_clusters):
     return pd.concat([kept, replacement], ignore_index=True)
 
 
+def validate_taxon_args(args):
+    if not args.species or not args.species.strip():
+        raise ValueError("--species is required for taxon builds")
+
+
+def validate_accession_args(args):
+    if not args.list or not Path(args.list).is_file():
+        raise FileNotFoundError("Accession list not found: %s" % args.list)
+    if not args.email:
+        raise ValueError("Entrez email is required for accession builds")
+
+
+@contextmanager
+def cleanup_on_failure(db_folder, tmp_folder, conn):
+    # prepare() has already created db_folder/tmp_folder and the sqlite
+    # schema by the time build_taxon/build_accession run; any error past
+    # that point used to leave that half-built state on disk, blocking the
+    # next attempt with "Folder already exists".
+    try:
+        yield
+    except Exception:
+        try:
+            conn.close()
+        except Exception:
+            pass
+        shutil.rmtree(str(tmp_folder), ignore_errors=True)
+        shutil.rmtree(str(db_folder), ignore_errors=True)
+        raise
+
+
 def build_taxon(args):
+    validate_taxon_args(args)
     db_folder, tmp_folder, conn = prepare(args)
 
-    radius = float(getattr(args, "radius", 20.0))
-    download_attempts = int(getattr(args, "download_attempts", 3))
-    batch_size = int(getattr(args, "download_batch_size", 500))
-    retry_delay = float(getattr(args, "retry_delay", 5.0))
-    max_reselection_rounds = int(getattr(args, "max_reselection_rounds", 5))
+    with cleanup_on_failure(db_folder, tmp_folder, conn):
+        radius = float(getattr(args, "radius", 20.0))
+        download_attempts = int(getattr(args, "download_attempts", 3))
+        batch_size = int(getattr(args, "download_batch_size", 500))
+        retry_delay = float(getattr(args, "retry_delay", 5.0))
+        max_reselection_rounds = int(getattr(args, "max_reselection_rounds", 5))
 
-    pathogen_name = validate_pathogen_name(args.species)
-    release_url, pdg_acc = resolve_release(pathogen_name, args.pd_version)
+        pathogen_name = validate_pathogen_name(args.species)
+        release_url, pdg_acc = resolve_release(pathogen_name, args.pd_version)
 
-    logging.info("Pathogen Detection release: %s", pdg_acc)
-    logging.info("Tree coverage radius: %s", radius)
+        logging.info("Pathogen Detection release: %s", pdg_acc)
+        logging.info("Tree coverage radius: %s", radius)
 
-    metadata_path, isolate_path, tree_paths = download_release_files(
-        release_url,
-        pdg_acc,
-        tmp_folder,
-    )
-    metadata, eligible = load_metadata(metadata_path, isolate_path)
-
-    logging.info("Metadata rows: %d", len(metadata))
-    logging.info("Assembly-backed rows: %d", len(eligible))
-    logging.info("Trees available: %d", len(tree_paths))
-
-    exclusions = set()
-    verified = {}
-    attempt_counts = defaultdict(int)
-    all_errors = {}
-
-    assembly_root = tmp_folder / "assemblies"
-
-    representatives, cluster_summary = select_all_representatives(
-        eligible,
-        tree_paths,
-        radius,
-        exclusions,
-        round_number=1,
-    )
-
-    if representatives.empty:
-        raise RuntimeError("No representatives could be selected")
-
-    reselection_round = 0
-    while True:
-        needed = sorted(set(representatives["asm_acc"]) - set(verified))
-
-        newly_verified, failed, attempts, errors = download_representatives(
-            needed,
-            assembly_root,
-            download_attempts,
-            batch_size,
-            retry_delay,
-            getattr(args, "key", None),
+        metadata_path, isolate_path, tree_paths = download_release_files(
+            release_url,
+            pdg_acc,
+            tmp_folder,
         )
+        metadata, eligible = load_metadata(metadata_path, isolate_path)
 
-        verified.update(newly_verified)
-        all_errors.update(errors)
-        for accession, count in attempts.items():
-            attempt_counts[accession] += count
+        logging.info("Metadata rows: %d", len(metadata))
+        logging.info("Assembly-backed rows: %d", len(eligible))
+        logging.info("Trees available: %d", len(tree_paths))
 
-        if not failed:
-            final_representatives = representatives[
-                representatives["asm_acc"].isin(verified)
-            ].copy()
-            final_summary = cluster_summary
-            break
+        exclusions = set()
+        verified = {}
+        attempt_counts = defaultdict(int)
+        all_errors = {}
 
-        affected_clusters = set(
-            representatives.loc[
-                representatives["asm_acc"].isin(failed),
-                "PDS_acc",
-            ]
-        )
+        assembly_root = tmp_folder / "assemblies"
 
-        logging.warning(
-            "%d selected assemblies remained unavailable after retries; "
-            "reselecting representatives for %d affected clusters",
-            len(failed),
-            len(affected_clusters),
-        )
-
-        exclusions.update(failed)
-
-        if reselection_round == max_reselection_rounds:
-            raise RuntimeError(
-                "Representative selection did not stabilize after %d reselection rounds"
-                % max_reselection_rounds
-            )
-
-        reselection_round += 1
-
-        reselected, reselected_summary = select_all_representatives(
+        representatives, cluster_summary = select_all_representatives(
             eligible,
             tree_paths,
             radius,
             exclusions,
-            round_number=reselection_round + 1,
-            pds_filter=affected_clusters,
-        )
-
-        representatives = replace_cluster_rows(
-            representatives,
-            reselected,
-            affected_clusters,
-        )
-        cluster_summary = replace_cluster_rows(
-            cluster_summary,
-            reselected_summary,
-            affected_clusters,
+            round_number=1,
         )
 
         if representatives.empty:
-            raise RuntimeError("No representatives remain after reselection")
+            raise RuntimeError("No representatives could be selected")
 
-    missing_final = set(final_representatives["asm_acc"]) - set(verified)
-    if missing_final:
-        raise RuntimeError(
-            "Final representatives lack FASTA files: %s"
-            % ", ".join(sorted(missing_final)[:10])
+        reselection_round = 0
+        while True:
+            needed = sorted(set(representatives["asm_acc"]) - set(verified))
+
+            newly_verified, failed, attempts, errors = download_representatives(
+                needed,
+                assembly_root,
+                download_attempts,
+                batch_size,
+                retry_delay,
+                getattr(args, "key", None),
+            )
+
+            verified.update(newly_verified)
+            all_errors.update(errors)
+            for accession, count in attempts.items():
+                attempt_counts[accession] += count
+
+            if not failed:
+                final_representatives = representatives[
+                    representatives["asm_acc"].isin(verified)
+                ].copy()
+                final_summary = cluster_summary
+                break
+
+            affected_clusters = set(
+                representatives.loc[
+                    representatives["asm_acc"].isin(failed),
+                    "PDS_acc",
+                ]
+            )
+
+            logging.warning(
+                "%d selected assemblies remained unavailable after retries; "
+                "reselecting representatives for %d affected clusters",
+                len(failed),
+                len(affected_clusters),
+            )
+
+            exclusions.update(failed)
+
+            if reselection_round == max_reselection_rounds:
+                raise RuntimeError(
+                    "Representative selection did not stabilize after %d reselection rounds"
+                    % max_reselection_rounds
+                )
+
+            reselection_round += 1
+
+            reselected, reselected_summary = select_all_representatives(
+                eligible,
+                tree_paths,
+                radius,
+                exclusions,
+                round_number=reselection_round + 1,
+                pds_filter=affected_clusters,
+            )
+
+            representatives = replace_cluster_rows(
+                representatives,
+                reselected,
+                affected_clusters,
+            )
+            cluster_summary = replace_cluster_rows(
+                cluster_summary,
+                reselected_summary,
+                affected_clusters,
+            )
+
+            if representatives.empty:
+                raise RuntimeError("No representatives remain after reselection")
+
+        missing_final = set(final_representatives["asm_acc"]) - set(verified)
+        if missing_final:
+            raise RuntimeError(
+                "Final representatives lack FASTA files: %s"
+                % ", ".join(sorted(missing_final)[:10])
+            )
+
+        signature_paths = sketch_assemblies(
+            final_representatives,
+            verified,
+            tmp_folder / "signatures",
+            args.number,
+            args.ksize,
+        )
+        merge_signatures(args, db_folder, signature_paths)
+
+        insert_metadata(
+            conn,
+            metadata,
+            final_representatives,
+            radius,
+            verified,
+            attempt_counts,
         )
 
-    signature_paths = sketch_assemblies(
-        final_representatives,
-        verified,
-        tmp_folder / "signatures",
-        args.number,
-        args.ksize,
-    )
-    merge_signatures(args, db_folder, signature_paths)
+        description = {
+            "Type": "Taxonomy",
+            "Species": pathogen_name,
+            "Version": pdg_acc,
+            "Hash_number": str(args.number),
+            "Kmer_size": str(args.ksize),
+            "Representative_method": "tree_radius",
+            "Tree_radius": str(radius),
+            "Representative_count": str(len(final_representatives)),
+            "Unavailable_assembly_count": str(len(exclusions)),
+        }
+        conn.executemany(
+            "INSERT OR REPLACE INTO DESC(name, value) VALUES (?, ?)",
+            sorted(description.items()),
+        )
+        conn.commit()
 
-    insert_metadata(
-        conn,
-        metadata,
-        final_representatives,
-        radius,
-        verified,
-        attempt_counts,
-    )
+        write_build_tables(
+            tmp_folder,
+            final_representatives,
+            final_summary,
+            exclusions,
+            all_errors,
+        )
 
-    description = {
-        "Type": "Taxonomy",
-        "Species": pathogen_name,
-        "Version": pdg_acc,
-        "Hash_number": str(args.number),
-        "Kmer_size": str(args.ksize),
-        "Representative_method": "tree_radius",
-        "Tree_radius": str(radius),
-        "Representative_count": str(len(final_representatives)),
-        "Unavailable_assembly_count": str(len(exclusions)),
-    }
-    conn.executemany(
-        "INSERT OR REPLACE INTO DESC(name, value) VALUES (?, ?)",
-        sorted(description.items()),
-    )
-    conn.commit()
+        shutil.copy2(
+            tmp_folder / "representatives.tsv",
+            db_folder / "representatives.tsv",
+        )
+        shutil.copy2(
+            tmp_folder / "cluster_summary.tsv",
+            db_folder / "cluster_summary.tsv",
+        )
+        shutil.copy2(
+            tmp_folder / "unavailable_assemblies.tsv",
+            db_folder / "unavailable_assemblies.tsv",
+        )
 
-    write_build_tables(
-        tmp_folder,
-        final_representatives,
-        final_summary,
-        exclusions,
-        all_errors,
-    )
+        conn.close()
+        shutil.rmtree(str(tmp_folder))
 
-    shutil.copy2(
-        tmp_folder / "representatives.tsv",
-        db_folder / "representatives.tsv",
-    )
-    shutil.copy2(
-        tmp_folder / "cluster_summary.tsv",
-        db_folder / "cluster_summary.tsv",
-    )
-    shutil.copy2(
-        tmp_folder / "unavailable_assemblies.tsv",
-        db_folder / "unavailable_assemblies.tsv",
-    )
-
-    conn.close()
-    shutil.rmtree(str(tmp_folder))
-
-    logging.info("Database complete: %s", db_folder)
-    logging.info("Final representatives: %d", len(final_representatives))
-    logging.info("Unavailable assemblies excluded: %d", len(exclusions))
+        logging.info("Database complete: %s", db_folder)
+        logging.info("Final representatives: %d", len(final_representatives))
+        logging.info("Unavailable assemblies excluded: %d", len(exclusions))
 
 # NCBI E-utilities asks for no more than ~3 requests/second without an API
 # key, and allows ~10 requests/second with one; fetch_accession_metadata
@@ -1079,84 +1112,81 @@ def fetch_accession_metadata(biosample, email, api_key):
 
 
 def build_accession(args):
+    validate_accession_args(args)
     db_folder, tmp_folder, conn = prepare(args)
 
-    if not args.list or not Path(args.list).is_file():
-        raise FileNotFoundError("Accession list not found: %s" % args.list)
-    if not args.email:
-        raise ValueError("Entrez email is required for accession builds")
+    with cleanup_on_failure(db_folder, tmp_folder, conn):
+        biosamples = [
+            line.strip()
+            for line in Path(args.list).read_text().splitlines()
+            if line.strip()
+        ]
 
-    biosamples = [
-        line.strip()
-        for line in Path(args.list).read_text().splitlines()
-        if line.strip()
-    ]
+        api_key = getattr(args, "key", None)
+        delay = ENTREZ_REQUEST_DELAY_WITH_KEY if api_key else ENTREZ_REQUEST_DELAY_NO_KEY
 
-    api_key = getattr(args, "key", None)
-    delay = ENTREZ_REQUEST_DELAY_WITH_KEY if api_key else ENTREZ_REQUEST_DELAY_NO_KEY
+        accessions = []
+        accession_to_biosample = {}
+        for index, biosample in enumerate(biosamples):
+            if index > 0:
+                time.sleep(delay)
+            try:
+                accession = fetch_accession_metadata(biosample, args.email, api_key)
+            except Exception as error:
+                logging.error("Entrez lookup failed for %s: %s", biosample, error)
+                continue
+            if accession:
+                accessions.append(accession)
+                accession_to_biosample[accession] = biosample
 
-    accessions = []
-    accession_to_biosample = {}
-    for index, biosample in enumerate(biosamples):
-        if index > 0:
-            time.sleep(delay)
-        try:
-            accession = fetch_accession_metadata(biosample, args.email, api_key)
-        except Exception as error:
-            logging.error("Entrez lookup failed for %s: %s", biosample, error)
-            continue
-        if accession:
-            accessions.append(accession)
-            accession_to_biosample[accession] = biosample
+        verified, failed, attempts, errors = download_representatives(
+            accessions,
+            tmp_folder / "assemblies",
+            int(getattr(args, "download_attempts", 3)),
+            int(getattr(args, "download_batch_size", 500)),
+            float(getattr(args, "retry_delay", 5.0)),
+            getattr(args, "key", None),
+        )
 
-    verified, failed, attempts, errors = download_representatives(
-        accessions,
-        tmp_folder / "assemblies",
-        int(getattr(args, "download_attempts", 3)),
-        int(getattr(args, "download_batch_size", 500)),
-        float(getattr(args, "retry_delay", 5.0)),
-        getattr(args, "key", None),
-    )
+        if not verified:
+            raise RuntimeError("No assemblies were downloaded")
 
-    if not verified:
-        raise RuntimeError("No assemblies were downloaded")
+        signature_paths = sketch_assemblies(
+            pd.DataFrame({"asm_acc": sorted(verified)}),
+            verified,
+            tmp_folder / "signatures",
+            args.number,
+            args.ksize,
+        )
+        merge_signatures(args, db_folder, signature_paths)
 
-    signature_paths = sketch_assemblies(
-        pd.DataFrame({"asm_acc": sorted(verified)}),
-        verified,
-        tmp_folder / "signatures",
-        args.number,
-        args.ksize,
-    )
-    merge_signatures(args, db_folder, signature_paths)
+        insert_accession_metadata(conn, accession_to_biosample, verified)
 
-    insert_accession_metadata(conn, accession_to_biosample, verified)
+        conn.executemany(
+            "INSERT OR REPLACE INTO DESC(name, value) VALUES (?, ?)",
+            [
+                ("Type", "Accession"),
+                ("Hash_number", str(args.number)),
+                ("Kmer_size", str(args.ksize)),
+                ("Assembly_count", str(len(verified))),
+                ("Unavailable_assembly_count", str(len(failed))),
+            ],
+        )
+        conn.commit()
+        conn.close()
 
-    conn.executemany(
-        "INSERT OR REPLACE INTO DESC(name, value) VALUES (?, ?)",
-        [
-            ("Type", "Accession"),
-            ("Hash_number", str(args.number)),
-            ("Kmer_size", str(args.ksize)),
-            ("Assembly_count", str(len(verified))),
-            ("Unavailable_assembly_count", str(len(failed))),
-        ],
-    )
-    conn.commit()
-    conn.close()
+        with (db_folder / "unavailable_assemblies.tsv").open(
+            "w",
+            encoding="utf-8",
+            newline="",
+        ) as handle:
+            writer = csv.writer(handle, delimiter="\t")
+            writer.writerow(["assembly_accession", "error"])
+            for accession in sorted(failed):
+                writer.writerow([accession, errors.get(accession, "")])
 
-    with (db_folder / "unavailable_assemblies.tsv").open(
-        "w",
-        encoding="utf-8",
-        newline="",
-    ) as handle:
-        writer = csv.writer(handle, delimiter="\t")
-        writer.writerow(["assembly_accession", "error"])
-        for accession in sorted(failed):
-            writer.writerow([accession, errors.get(accession, "")])
-
-    shutil.rmtree(str(tmp_folder))
-    logging.info("Database complete: %s", db_folder)
+        shutil.rmtree(str(tmp_folder))
+        logging.info("Database complete: %s", db_folder)
 
 
 def build(args):
