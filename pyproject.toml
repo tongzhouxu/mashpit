@@ -16,6 +16,12 @@ readme = "README.md"
 
 dependencies = [
     "sourmash ~= 4.6.1",
+    # sourmash pulls in screed unpinned; screed >=1.1.3 dropped its wheel and
+    # only ships an sdist whose old setuptools_scm build backend needs
+    # pkg_resources, which recent setuptools no longer provides, breaking
+    # `pip install .` on a clean environment. Pin to the last version with a
+    # working wheel until screed publishes one again.
+    "screed >=1.0.5,<1.1.3",
     "pandas ~= 2.0.3",
     "numpy ~= 1.24.4",
     "biopython ~= 1.83",
