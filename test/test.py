@@ -22,13 +22,17 @@ from mashpit import gui as gui_module
 from mashpit import query as query_module
 from mashpit.streamlit_app import safe_filename, validate_database
 from mashpit.build import (
+    collect_custom_sequences,
     create_connection,
     create_database,
     download_release_files,
     download_representatives,
     fetch_accession_metadata,
+    find_local_fasta_files,
     insert_accession_metadata,
+    insert_custom_metadata,
     insert_metadata,
+    load_custom_metadata,
     load_metadata,
     load_tree_graph,
     resolve_release,
@@ -36,7 +40,10 @@ from mashpit.build import (
     select_all_representatives,
     select_tree_representatives,
     sketch_assemblies,
+    sketch_custom_sequences,
+    strip_fasta_suffix,
     target_key,
+    validate_custom_args,
     validate_pathogen_name,
 )
 from mashpit.mashpit import commandToArgs
@@ -1208,6 +1215,277 @@ class TestBuildAccession(unittest.TestCase):
         self.assertEqual(actual_sqlite_sha, expected_sqlite_sha)
         self.assertEqual(len(database_sig), 1)
         self.assertEqual(database_sig[0].name, "GCA_019647415.1")
+
+
+class TestFindLocalFastaFiles(unittest.TestCase):
+    def test_strip_fasta_suffix_recognizes_common_extensions(self):
+        self.assertEqual(strip_fasta_suffix("sample1.fasta"), "sample1")
+        self.assertEqual(strip_fasta_suffix("sample2.fa"), "sample2")
+        self.assertEqual(strip_fasta_suffix("sample3.fna.gz"), "sample3")
+        self.assertEqual(strip_fasta_suffix("sample4.fas"), "sample4")
+        self.assertEqual(strip_fasta_suffix("sample5.ffn"), "sample5")
+
+    def test_strip_fasta_suffix_rejects_unrelated_files(self):
+        self.assertIsNone(strip_fasta_suffix("readme.txt"))
+        self.assertIsNone(strip_fasta_suffix("metadata.tsv"))
+
+    def test_maps_sample_id_to_path_and_ignores_non_fasta_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            (tmp / "sample1.fasta").write_text(">c1\nACGT\n")
+            (tmp / "sample2.fa").write_text(">c1\nACGT\n")
+            (tmp / "notes.txt").write_text("ignore me")
+            fasta_paths = find_local_fasta_files(tmp)
+            self.assertEqual(set(fasta_paths), {"sample1", "sample2"})
+            self.assertEqual(fasta_paths["sample1"], tmp / "sample1.fasta")
+
+    def test_rejects_duplicate_sample_id_across_extensions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            (tmp / "sample1.fasta").write_text(">c1\nACGT\n")
+            (tmp / "sample1.fa").write_text(">c1\nACGT\n")
+            with self.assertRaises(ValueError):
+                find_local_fasta_files(tmp)
+
+
+class TestLoadCustomMetadata(unittest.TestCase):
+    def test_returns_empty_dict_when_no_path_given(self):
+        self.assertEqual(load_custom_metadata(None), {})
+
+    def test_reads_rows_keyed_by_sample_id_column(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "metadata.tsv"
+            path.write_text("sample_id\tstrain\thost\nsample1\tStrainA\tHomo sapiens\n")
+            metadata = load_custom_metadata(path)
+            self.assertEqual(metadata["sample1"]["strain"], "StrainA")
+            self.assertEqual(metadata["sample1"]["host"], "Homo sapiens")
+
+    def test_raises_without_a_recognized_id_column(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "metadata.tsv"
+            path.write_text("strain\thost\nStrainA\tHomo sapiens\n")
+            with self.assertRaises(ValueError):
+                load_custom_metadata(path)
+
+
+class TestCollectCustomSequences(unittest.TestCase):
+    def test_metadata_row_with_no_matching_fasta_is_kept_but_unused(self):
+        # collect_custom_sequences only warns about this (logged, not
+        # raised) since a stray metadata row isn't fatal - the corresponding
+        # sample simply never appears in fasta_paths and so is never
+        # inserted by insert_custom_metadata.
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            (tmp / "sample1.fasta").write_text(">c1\nACGT\n")
+            metadata_path = tmp / "metadata.tsv"
+            metadata_path.write_text(
+                "sample_id\tstrain\nsample1\tStrainA\nghost_sample\tStrainB\n"
+            )
+            fasta_paths, metadata_by_id = collect_custom_sequences(tmp, metadata_path)
+            self.assertEqual(set(fasta_paths), {"sample1"})
+            self.assertIn("ghost_sample", metadata_by_id)
+
+
+class TestSketchCustomSequences(unittest.TestCase):
+    def test_sketches_valid_fasta_and_reports_no_errors(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            fasta_path = tmp / "sample1.fasta"
+            fasta_path.write_text(">c1\n" + "ACGTACGTAC" * 10 + "\n")
+            signature_paths, errors = sketch_custom_sequences(
+                {"sample1": fasta_path}, tmp / "sigs", 100, 21
+            )
+            self.assertEqual(set(signature_paths), {"sample1"})
+            self.assertEqual(errors, {})
+            self.assertTrue(signature_paths["sample1"].is_file())
+
+    def test_one_malformed_file_does_not_prevent_others_from_sketching(self):
+        # Local files are much more likely than NCBI downloads to be
+        # malformed, so a single bad file must not abort the whole build.
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            good = tmp / "good_sample.fasta"
+            good.write_text(">c1\n" + "ACGTACGTAC" * 10 + "\n")
+            empty = tmp / "empty_sample.fasta"
+            empty.write_text("")
+            fasta_paths = {"good_sample": good, "empty_sample": empty}
+            signature_paths, errors = sketch_custom_sequences(
+                fasta_paths, tmp / "sigs", 100, 21
+            )
+            self.assertEqual(set(signature_paths), {"good_sample"})
+            self.assertIn("empty_sample", errors)
+
+
+class TestInsertCustomMetadata(unittest.TestCase):
+    def test_writes_missing_placeholders_when_no_metadata_supplied(self):
+        conn = create_connection(":memory:")
+        create_database(conn)
+        verified = {"sample1": Path("/fake/sample1.fasta")}
+
+        insert_custom_metadata(conn, {}, verified)
+
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM METADATA")
+        columns = [description[0] for description in cursor.description]
+        row = dict(zip(columns, cursor.fetchone()))
+        conn.close()
+
+        self.assertEqual(row["biosample_acc"], "sample1")
+        self.assertEqual(row["asm_acc"], "sample1")
+        other_columns = set(columns) - {"biosample_acc", "asm_acc"}
+        for column in other_columns:
+            self.assertEqual(row[column], "missing")
+
+    def test_uses_supplied_metadata_fields_and_id_overrides(self):
+        conn = create_connection(":memory:")
+        create_database(conn)
+        verified = {"sample1": Path("/fake/sample1.fasta")}
+        metadata_by_id = {
+            "sample1": {
+                "strain": "StrainA",
+                "host": "Homo sapiens",
+                "biosample_acc": "SAMN99999999",
+            }
+        }
+
+        insert_custom_metadata(conn, metadata_by_id, verified)
+
+        cursor = conn.cursor()
+        cursor.execute("SELECT biosample_acc, asm_acc, strain, host FROM METADATA")
+        row = cursor.fetchone()
+        conn.close()
+
+        self.assertEqual(row, ("SAMN99999999", "sample1", "StrainA", "Homo sapiens"))
+
+
+class TestValidateCustomArgs(unittest.TestCase):
+    def test_rejects_missing_input_dir(self):
+        args = types.SimpleNamespace(input_dir=None, metadata=None)
+        with self.assertRaises(FileNotFoundError):
+            validate_custom_args(args)
+
+    def test_rejects_nonexistent_input_dir(self):
+        args = types.SimpleNamespace(input_dir="/no/such/dir", metadata=None)
+        with self.assertRaises(FileNotFoundError):
+            validate_custom_args(args)
+
+    def test_rejects_missing_metadata_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            args = types.SimpleNamespace(input_dir=tmp, metadata="/no/such/metadata.tsv")
+            with self.assertRaises(FileNotFoundError):
+                validate_custom_args(args)
+
+    def test_accepts_valid_input_dir_without_metadata(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            args = types.SimpleNamespace(input_dir=tmp, metadata=None)
+            validate_custom_args(args)  # must not raise
+
+
+class TestBuildCustom(unittest.TestCase):
+    # Fully offline end-to-end test: no network, no NCBI datasets binary
+    # required (prepare() is called with require_datasets=False for custom
+    # builds), so this runs in the fast/default suite rather than behind
+    # @network_test.
+    @classmethod
+    def setUpClass(cls):
+        cls.input_dir = Path(tempfile.mkdtemp(prefix="mashpit_custom_input_"))
+        (cls.input_dir / "sampleA.fasta").write_text(
+            ">contig1\n" + "ACGTACGTAC" * 50 + "\n"
+        )
+        (cls.input_dir / "sampleB.fa").write_text(
+            ">contig1\n" + "TTGGCCAATT" * 50 + "\n"
+        )
+        cls.metadata_path = cls.input_dir.parent / "mashpit_custom_metadata.tsv"
+        cls.metadata_path.write_text(
+            "sample_id\tstrain\thost\nsampleA\tStrainA\tHomo sapiens\n"
+        )
+
+        cls.build_result = subprocess.run(
+            [
+                "mashpit",
+                "build",
+                "custom",
+                "test_custom_db",
+                "--input-dir",
+                str(cls.input_dir),
+                "--metadata",
+                str(cls.metadata_path),
+            ],
+            capture_output=True,
+            text=True,
+        )
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.input_dir, ignore_errors=True)
+        if cls.metadata_path.exists():
+            cls.metadata_path.unlink()
+        shutil.rmtree("test_custom_db", ignore_errors=True)
+        for file in os.listdir():
+            if file.endswith(".log"):
+                os.remove(file)
+
+    def test_build_succeeds(self):
+        self.assertEqual(self.build_result.returncode, 0, self.build_result.stderr)
+
+    def test_desc_marks_type_custom(self):
+        conn = create_connection("test_custom_db/test_custom_db.db")
+        cursor = conn.cursor()
+        cursor.execute("SELECT value FROM DESC WHERE name = 'Type'")
+        value = cursor.fetchone()[0]
+        conn.close()
+        self.assertEqual(value, "Custom")
+
+    def test_metadata_rows_use_supplied_fields_and_missing_fallback(self):
+        conn = create_connection("test_custom_db/test_custom_db.db")
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT biosample_acc, asm_acc, strain, host FROM METADATA "
+            "ORDER BY asm_acc"
+        )
+        rows = cursor.fetchall()
+        conn.close()
+        self.assertEqual(
+            rows,
+            [
+                ("sampleA", "sampleA", "StrainA", "Homo sapiens"),
+                ("sampleB", "sampleB", "missing", "missing"),
+            ],
+        )
+
+    def test_signature_file_contains_both_samples(self):
+        database_sig = list(
+            load_file_as_signatures("test_custom_db/test_custom_db.sig")
+        )
+        self.assertEqual({sig.name for sig in database_sig}, {"sampleA", "sampleB"})
+
+    def test_query_against_custom_database_finds_matching_sample(self):
+        query_dir = Path(tempfile.mkdtemp(prefix="mashpit_custom_query_"))
+        try:
+            query_path = query_dir / "sampleA_query.fasta"
+            query_path.write_text(">contig1\n" + "ACGTACGTAC" * 50 + "\n")
+            result = subprocess.run(
+                ["mashpit", "query", str(query_path), "test_custom_db"],
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+            output_df = pd.read_csv("sampleA_query_representative_matches.csv")
+            top_hit = output_df.sort_values(
+                "similarity_score", ascending=False
+            ).iloc[0]
+            self.assertEqual(top_hit["asm_acc"], "sampleA")
+            self.assertGreater(top_hit["similarity_score"], 0.9)
+        finally:
+            shutil.rmtree(query_dir, ignore_errors=True)
+            for name in (
+                "sampleA_query_representative_matches.csv",
+                "sampleA_query_tree.newick",
+                "sampleA_query_tree.png",
+            ):
+                if os.path.isfile(name):
+                    os.remove(name)
 
 
 class TestSafeFilename(unittest.TestCase):

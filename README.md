@@ -23,6 +23,7 @@ Mashpit is designed for offline or resource-limited analysis, including deployme
 - **Integrated metadata:** Return epidemiological information such as isolation date, location, host, BioSample accession, assembly accession, and SNP-cluster identifiers.
 - **Local visualization:** Produce a query result table and a tree showing the relationship between the query and its closest database representatives.
 - **Offline operation:** After a database has been built, routine queries can be performed without uploading genomic data.
+- **Custom databases:** Build a database directly from local FASTA files, with no NCBI download at all - useful for proprietary or unpublished sequence collections.
 
 ## Mashpit 1.0 database design
 
@@ -95,7 +96,8 @@ DATABASE_NAME/
 ├── DATABASE_NAME.sig              # merged sourmash signatures
 ├── representatives.tsv            # taxon databases only
 ├── cluster_summary.tsv            # taxon databases only
-└── unavailable_assemblies.tsv     # accessions that could not be downloaded
+├── unavailable_assemblies.tsv     # taxon/accession databases: accessions that could not be downloaded
+└── unavailable_sequences.tsv      # custom databases: local FASTA files that failed to sketch
 ```
 
 The build log itself (`mashpit-<timestamp>.log`) is written to the current working directory alongside the database folder, not inside it.
@@ -104,10 +106,11 @@ Keep the entire database directory together when moving it to another computer.
 
 ## Building a database
 
-Mashpit supports two database types:
+Mashpit supports three database types:
 
 - **Taxon database:** Build from NCBI Pathogen Detection SNP clusters for a selected organism.
 - **Accession database:** Build from a user-provided list of NCBI BioSample accessions.
+- **Custom database:** Build directly from local FASTA files, with no NCBI download at all.
 
 ### Taxon database
 
@@ -140,6 +143,36 @@ Then run (an Entrez email is required to resolve BioSample accessions via NCBI):
 ```bash
 mashpit build accession custom_database --list biosamples.txt --email you@example.com
 ```
+
+### Custom database
+
+Build a database directly from local FASTA files - no NCBI download, Entrez lookup, or `datasets` CLI is required for this database type, which makes it suitable for proprietary or unpublished sequence collections. Place one genome per file, named `<sample_id>.fasta` (`.fa`/`.fna`/`.fas`/`.ffn`, optionally gzipped), in a directory:
+
+```text
+my_genomes/
+├── sample1.fasta
+├── sample2.fasta
+└── sample3.fasta
+```
+
+Then run:
+
+```bash
+mashpit build custom my_database --input-dir my_genomes/
+```
+
+Optional metadata can be supplied as a TSV with a `sample_id` column (matching the filenames) plus any subset of the usual metadata fields (`strain`, `collection_date`, `geo_loc_name`, `host`, etc.); fields not supplied, or samples not listed, are recorded as `missing`:
+
+```text
+sample_id   strain    collection_date   host
+sample1     StrainA   2024-03-01        Homo sapiens
+```
+
+```bash
+mashpit build custom my_database --input-dir my_genomes/ --metadata metadata.tsv
+```
+
+A custom database has no SNP-cluster concept, so it behaves like an accession database at query time: no cluster-candidates table, and `--radius`/tree-based representative selection do not apply (every provided genome becomes a database entry directly).
 
 ### Tree-radius option
 

@@ -53,7 +53,7 @@ def commandToArgs(commandline):
     # Build arguments
     subparser_build.add_argument(
         "type",
-        choices=["taxon", "accession"],
+        choices=["taxon", "accession", "custom"],
         help="database type",
     )
     subparser_build.add_argument(
@@ -96,6 +96,25 @@ def commandToArgs(commandline):
     subparser_build.add_argument(
         "--list",
         help="path to a file containing NCBI BioSample accessions",
+    )
+    subparser_build.add_argument(
+        "--input-dir",
+        dest="input_dir",
+        help=(
+            "directory of local FASTA files (one genome per file, named "
+            "<sample_id>.fasta/.fa/.fna/.fas/.ffn, optionally .gz); "
+            "required for custom builds"
+        ),
+    )
+    subparser_build.add_argument(
+        "--metadata",
+        help=(
+            "optional TSV for custom builds with a sample_id column "
+            "(matching --input-dir filenames) plus any subset of the "
+            "METADATA table's other columns (strain, collection_date, "
+            "geo_loc_name, host, etc.); fields not supplied are recorded "
+            "as 'missing'"
+        ),
     )
     subparser_build.add_argument(
         "--radius",

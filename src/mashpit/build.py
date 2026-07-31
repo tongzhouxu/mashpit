@@ -165,8 +165,10 @@ def run_command(command, check=True):
     return result
 
 
-def prepare(args):
-    if shutil.which("datasets") is None:
+def prepare(args, require_datasets=True):
+    # Custom builds sketch local FASTA files directly and never call NCBI
+    # datasets, so they shouldn't need it installed at all.
+    if require_datasets and shutil.which("datasets") is None:
         raise RuntimeError("NCBI datasets was not found in PATH")
 
     timestamp = time.strftime("%Y%m%d%H%M%S")
@@ -873,6 +875,18 @@ def validate_accession_args(args):
         raise ValueError("Entrez email is required for accession builds")
 
 
+def validate_custom_args(args):
+    input_dir = getattr(args, "input_dir", None)
+    if not input_dir or not Path(input_dir).is_dir():
+        raise FileNotFoundError(
+            "--input-dir is required for custom builds and must be an "
+            "existing directory: %s" % input_dir
+        )
+    metadata = getattr(args, "metadata", None)
+    if metadata and not Path(metadata).is_file():
+        raise FileNotFoundError("--metadata file not found: %s" % metadata)
+
+
 @contextmanager
 def cleanup_on_failure(db_folder, tmp_folder, conn):
     # prepare() has already created db_folder/tmp_folder and the sqlite
@@ -1189,10 +1203,270 @@ def build_accession(args):
         logging.info("Database complete: %s", db_folder)
 
 
+FASTA_SUFFIXES = (".fasta", ".fa", ".fna", ".fas", ".ffn")
+
+# Metadata fields a custom build can optionally supply per sample, beyond
+# the identity columns (biosample_acc/asm_acc) handled separately below.
+CUSTOM_METADATA_COLUMNS = [
+    "taxid",
+    "strain",
+    "collected_by",
+    "collection_date",
+    "geo_loc_name",
+    "isolation_source",
+    "lat_lon",
+    "serovar",
+    "sub_species",
+    "species",
+    "genus",
+    "host",
+    "host_disease",
+    "outbreak",
+    "srr",
+]
+
+
+def strip_fasta_suffix(filename):
+    name = filename
+    if name.endswith(".gz"):
+        name = name[: -len(".gz")]
+    for suffix in FASTA_SUFFIXES:
+        if name.endswith(suffix):
+            return name[: -len(suffix)]
+    return None
+
+
+def find_local_fasta_files(input_dir):
+    input_dir = Path(input_dir)
+    fasta_paths = {}
+
+    for path in sorted(input_dir.iterdir()):
+        if not path.is_file():
+            continue
+        sample_id = strip_fasta_suffix(path.name)
+        if sample_id is None:
+            continue
+        if not sample_id:
+            raise ValueError("File name has no sample id: %s" % path)
+        if sample_id in fasta_paths:
+            raise ValueError(
+                "Duplicate sample id %r from files %s and %s"
+                % (sample_id, fasta_paths[sample_id], path)
+            )
+        fasta_paths[sample_id] = path
+
+    return fasta_paths
+
+
+def load_custom_metadata(metadata_path):
+    if not metadata_path:
+        return {}
+
+    frame = pd.read_csv(metadata_path, sep="\t", dtype=str, low_memory=False)
+    id_column = None
+    for candidate in ("sample_id", "id", "asm_acc", "biosample_acc"):
+        if candidate in frame.columns:
+            id_column = candidate
+            break
+    if id_column is None:
+        raise ValueError(
+            "--metadata file must have a sample_id (or id/asm_acc/"
+            "biosample_acc) column"
+        )
+
+    metadata_by_id = {}
+    for _, row in frame.iterrows():
+        sample_id = normalize_value(row[id_column])
+        if not sample_id:
+            continue
+        metadata_by_id[sample_id] = row.to_dict()
+
+    return metadata_by_id
+
+
+def collect_custom_sequences(input_dir, metadata_path):
+    fasta_paths = find_local_fasta_files(input_dir)
+    metadata_by_id = load_custom_metadata(metadata_path)
+
+    unmatched_metadata = set(metadata_by_id) - set(fasta_paths)
+    for sample_id in sorted(unmatched_metadata):
+        logging.warning(
+            "Metadata row for %r has no matching FASTA file in %s; skipping",
+            sample_id,
+            input_dir,
+        )
+
+    return fasta_paths, metadata_by_id
+
+
+def sketch_custom_sequences(fasta_paths, signature_dir, hash_number, kmer_size):
+    # Local files are far more likely than NCBI's own downloads to be
+    # malformed/empty/non-FASTA, so - unlike sketch_assemblies() - each
+    # sample is sketched defensively and a failure only drops that one
+    # sample rather than aborting the whole build.
+    signature_dir.mkdir(parents=True, exist_ok=True)
+    signature_paths = {}
+    errors = {}
+    total = len(fasta_paths)
+
+    for index, sample_id in enumerate(sorted(fasta_paths), start=1):
+        fasta_path = fasta_paths[sample_id]
+        signature_path = signature_dir / ("%s.sig" % sample_id)
+
+        try:
+            minhash = MinHash(n=hash_number, ksize=kmer_size)
+            sequence_seen = False
+            with screed.open(str(fasta_path)) as records:
+                for record in records:
+                    minhash.add_sequence(record.sequence, force=True)
+                    sequence_seen = True
+            if not sequence_seen:
+                raise ValueError("FASTA file contains no sequences")
+
+            signature = SourmashSignature(
+                minhash,
+                name=sample_id,
+                filename=str(fasta_path),
+            )
+            with signature_path.open("wt", encoding="utf-8") as handle:
+                save_signatures([signature], fp=handle)
+
+            signature_paths[sample_id] = signature_path
+        except Exception as error:
+            logging.error(
+                "Failed to sketch %s (%s): %s", sample_id, fasta_path, error
+            )
+            errors[sample_id] = str(error)
+
+        if index % 1000 == 0 or index == total:
+            logging.info("Sketched %d/%d local sequences", index, total)
+
+    return signature_paths, errors
+
+
+def insert_custom_metadata(conn, metadata_by_id, verified):
+    columns = [
+        "biosample_acc",
+        "taxid",
+        "strain",
+        "collected_by",
+        "collection_date",
+        "geo_loc_name",
+        "isolation_source",
+        "lat_lon",
+        "serovar",
+        "sub_species",
+        "species",
+        "genus",
+        "host",
+        "host_disease",
+        "outbreak",
+        "srr",
+        "PDT_acc",
+        "PDS_acc",
+        "asm_acc",
+    ]
+
+    for sample_id in sorted(verified):
+        row = metadata_by_id.get(sample_id, {})
+
+        # No real biosample/assembly accession exists for local sequences
+        # unless the metadata file explicitly supplies one; fall back to
+        # the sample id itself for both.
+        biosample_acc = normalize_value(row.get("biosample_acc", "")) or sample_id
+        asm_acc = normalize_value(row.get("asm_acc", "")) or sample_id
+
+        values = {
+            "biosample_acc": biosample_acc,
+            "asm_acc": asm_acc,
+            # PDT_acc/PDS_acc are NCBI Pathogen Detection SNP-cluster
+            # concepts that don't apply to unclustered local sequences.
+            "PDT_acc": "missing",
+            "PDS_acc": "missing",
+        }
+        for column in CUSTOM_METADATA_COLUMNS:
+            value = normalize_value(row.get(column, ""))
+            values[column] = value if value else "missing"
+
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO METADATA (
+                biosample_acc, taxid, strain, collected_by, collection_date,
+                geo_loc_name, isolation_source, lat_lon, serovar, sub_species,
+                species, genus, host, host_disease, outbreak, srr, PDT_acc,
+                PDS_acc, asm_acc
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [values[column] for column in columns],
+        )
+
+    conn.commit()
+
+
+def build_custom(args):
+    validate_custom_args(args)
+    db_folder, tmp_folder, conn = prepare(args, require_datasets=False)
+
+    with cleanup_on_failure(db_folder, tmp_folder, conn):
+        fasta_paths, metadata_by_id = collect_custom_sequences(
+            args.input_dir, getattr(args, "metadata", None)
+        )
+        if not fasta_paths:
+            raise RuntimeError("No FASTA files found in %s" % args.input_dir)
+
+        logging.info(
+            "Found %d local sequences in %s", len(fasta_paths), args.input_dir
+        )
+
+        signature_paths, errors = sketch_custom_sequences(
+            fasta_paths,
+            tmp_folder / "signatures",
+            args.number,
+            args.ksize,
+        )
+        if not signature_paths:
+            raise RuntimeError(
+                "No signatures could be created from %s" % args.input_dir
+            )
+
+        merge_signatures(args, db_folder, signature_paths)
+        insert_custom_metadata(conn, metadata_by_id, signature_paths)
+
+        conn.executemany(
+            "INSERT OR REPLACE INTO DESC(name, value) VALUES (?, ?)",
+            [
+                ("Type", "Custom"),
+                ("Hash_number", str(args.number)),
+                ("Kmer_size", str(args.ksize)),
+                ("Sequence_count", str(len(signature_paths))),
+                ("Unavailable_sequence_count", str(len(errors))),
+            ],
+        )
+        conn.commit()
+        conn.close()
+
+        with (db_folder / "unavailable_sequences.tsv").open(
+            "w",
+            encoding="utf-8",
+            newline="",
+        ) as handle:
+            writer = csv.writer(handle, delimiter="\t")
+            writer.writerow(["sample_id", "error"])
+            for sample_id in sorted(errors):
+                writer.writerow([sample_id, errors[sample_id]])
+
+        shutil.rmtree(str(tmp_folder))
+        logging.info("Database complete: %s", db_folder)
+        logging.info("Sequences included: %d", len(signature_paths))
+        logging.info("Sequences excluded due to sketch errors: %d", len(errors))
+
+
 def build(args):
     if args.type == "taxon":
         build_taxon(args)
     elif args.type == "accession":
         build_accession(args)
+    elif args.type == "custom":
+        build_custom(args)
     else:
         raise ValueError("Unsupported database type: %s" % args.type)
