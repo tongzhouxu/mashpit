@@ -7,7 +7,9 @@ name: network integration tests
 # instead they run on a schedule and can be triggered manually.
 on:
   schedule:
-    - cron: '0 6 * * 1'
+    # Monthly (1st, 06:00 UTC) - NCBI's API/data are stable enough that a
+    # weekly cadence was mostly just burning CI time on repeat green runs.
+    - cron: '0 6 1 * *'
   workflow_dispatch: {}
 
 jobs:
