@@ -1567,6 +1567,18 @@ def resolve_database_file(database):
     return candidates[0]
 
 
+def list_accessions(db_path):
+    # asm_acc/biosample_acc are part of the fixed METADATA schema (see
+    # create_database), so both are always present regardless of build
+    # type - this is the join key `mashpit annotate --values` needs.
+    conn = create_connection(str(db_path))
+    rows = conn.execute(
+        "SELECT asm_acc, biosample_acc FROM METADATA ORDER BY asm_acc"
+    ).fetchall()
+    conn.close()
+    return rows
+
+
 def load_annotation_values(values_path, key_column=None):
     """Read a TSV keyed by asm_acc or biosample_acc (matching the real
     METADATA columns, unlike load_custom_metadata's more permissive

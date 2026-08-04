@@ -35,6 +35,7 @@ from mashpit.build import (
     insert_accession_metadata,
     insert_custom_metadata,
     insert_metadata,
+    list_accessions,
     load_annotation_values,
     load_custom_metadata,
     load_metadata,
@@ -1669,6 +1670,43 @@ class TestEnsureAnnotationLogTable(unittest.TestCase):
         conn.close()
 
 
+class TestListAccessions(unittest.TestCase):
+    def test_returns_asm_acc_and_biosample_acc_sorted_by_asm_acc(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "my.db"
+            conn = create_connection(str(db_path))
+            create_database(conn)
+            conn.execute(
+                "INSERT INTO METADATA (biosample_acc, asm_acc) "
+                "VALUES ('SAMN002', 'GCA_000000002.1')"
+            )
+            conn.execute(
+                "INSERT INTO METADATA (biosample_acc, asm_acc) "
+                "VALUES ('SAMN001', 'GCA_000000001.1')"
+            )
+            conn.commit()
+            conn.close()
+
+            rows = list_accessions(db_path)
+
+            self.assertEqual(
+                rows,
+                [
+                    ("GCA_000000001.1", "SAMN001"),
+                    ("GCA_000000002.1", "SAMN002"),
+                ],
+            )
+
+    def test_returns_empty_list_for_an_empty_database(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "empty.db"
+            conn = create_connection(str(db_path))
+            create_database(conn)
+            conn.close()
+
+            self.assertEqual(list_accessions(db_path), [])
+
+
 class TestAnnotateDatabase(unittest.TestCase):
     # These tests build the METADATA table directly (bypassing both the
     # taxon and custom build paths) to prove annotate_database only cares
@@ -1899,6 +1937,17 @@ class TestAnnotateCli(unittest.TestCase):
         finally:
             if values_path.exists():
                 values_path.unlink()
+
+    def test_list_accessions_via_cli(self):
+        result = subprocess.run(
+            ["mashpit", "annotate", "test_annotate_db", "--list-accessions"],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        lines = result.stdout.strip().splitlines()
+        self.assertEqual(lines[0], "asm_acc\tbiosample_acc")
+        self.assertIn("sample1\tsample1", lines)
 
 
 class TestSafeFilename(unittest.TestCase):

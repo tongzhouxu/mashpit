@@ -8,7 +8,18 @@ that records change history is created on first use if it isn't already
 present.
 """
 
-from mashpit.build import annotate_database, read_annotation_log, resolve_database_file
+from mashpit.build import (
+    annotate_database,
+    list_accessions,
+    read_annotation_log,
+    resolve_database_file,
+)
+
+
+def print_accessions(db_path):
+    print("asm_acc\tbiosample_acc")
+    for asm_acc, biosample_acc in list_accessions(db_path):
+        print("%s\t%s" % (asm_acc, biosample_acc))
 
 
 def print_history(db_path):
@@ -44,12 +55,18 @@ def print_history(db_path):
 def annotate(args):
     db_path = resolve_database_file(args.database)
 
+    if args.list_accessions:
+        print_accessions(db_path)
+        return
+
     if args.history:
         print_history(db_path)
         return
 
     if not args.values:
-        raise SystemExit("--values is required unless --history is given")
+        raise SystemExit(
+            "--values is required unless --history or --list-accessions is given"
+        )
 
     summary = annotate_database(db_path, args.values, getattr(args, "key", None))
 

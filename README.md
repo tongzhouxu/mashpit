@@ -195,6 +195,14 @@ This prevents missing assemblies from producing invalid database entries.
 
 `mashpit annotate` adds or updates custom metadata columns on a database you've already built - taxon, accession, or custom - since all three share the same underlying metadata table. This is the place to attach your own project-specific fields (an internal lab ID, a project or batch code, an outbreak investigation code, anything not in Mashpit's built-in schema) without rebuilding the database.
 
+To see which assembly/BioSample accessions are actually in the database - the ids your values file needs to match - print them as a starting point:
+
+```bash
+mashpit annotate my_database --list-accessions > accessions.tsv
+```
+
+Then annotate:
+
 ```bash
 mashpit annotate my_database --values project_metadata.tsv
 ```

@@ -232,6 +232,16 @@ def commandToArgs(commandline):
         action="store_true",
         help="print this database's annotation history instead of applying changes",
     )
+    subparser_annotate.add_argument(
+        "--list-accessions",
+        dest="list_accessions",
+        action="store_true",
+        help=(
+            "print this database's asm_acc/biosample_acc pairs as a TSV - "
+            "a starting point for building a --values file - instead of "
+            "applying changes"
+        ),
+    )
     subparser_annotate.set_defaults(func=annotate.annotate)
 
     return parser.parse_args(commandline)
