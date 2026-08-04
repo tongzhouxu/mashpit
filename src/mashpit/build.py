@@ -2,6 +2,7 @@
 
 import csv
 import glob
+import hashlib
 import logging
 import os
 import re
@@ -100,6 +101,31 @@ def create_database(conn):
         )
         """
     )
+    ensure_annotation_log_table(conn)
+    conn.commit()
+
+
+def ensure_annotation_log_table(conn):
+    # CREATE TABLE IF NOT EXISTS makes this safe to call against a database
+    # built before this table existed - `mashpit annotate` calls this too,
+    # so older databases self-migrate on first use rather than needing a
+    # separate upgrade step.
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS ANNOTATION_LOG (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT,
+            key_column TEXT,
+            columns_added TEXT,
+            columns_updated TEXT,
+            values_file TEXT,
+            values_file_sha256 TEXT,
+            rows_updated INTEGER,
+            rows_unmatched_in_file INTEGER,
+            rows_unmatched_in_database INTEGER
+        )
+        """
+    )
     conn.commit()
 
 
@@ -128,6 +154,67 @@ def list_links(url):
     parser = LinkParser()
     parser.feed(response.text)
     return parser.links
+
+
+RESERVED_METADATA_COLUMNS = frozenset(
+    {
+        "biosample_acc",
+        "taxid",
+        "strain",
+        "collected_by",
+        "collection_date",
+        "geo_loc_name",
+        "isolation_source",
+        "lat_lon",
+        "serovar",
+        "sub_species",
+        "species",
+        "genus",
+        "host",
+        "host_disease",
+        "outbreak",
+        "srr",
+        "PDT_acc",
+        "PDS_acc",
+        "asm_acc",
+    }
+)
+
+COLUMN_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def validate_column_name(column_name):
+    # Column names can't be bound as query parameters in SQLite (only
+    # values can), so any dynamic column name must be validated before
+    # being interpolated into SQL - this is what makes that safe.
+    if not COLUMN_NAME_RE.match(column_name):
+        raise ValueError(
+            "Invalid column name %r: must start with a letter or "
+            "underscore and contain only letters, digits, and "
+            "underscores" % column_name
+        )
+    lowered = {name.lower() for name in RESERVED_METADATA_COLUMNS}
+    if column_name.lower() in lowered:
+        raise ValueError(
+            "%r is a built-in METADATA column and cannot be added or "
+            "overwritten as a custom column" % column_name
+        )
+
+
+def existing_metadata_columns(conn):
+    return {row[1] for row in conn.execute("PRAGMA table_info(METADATA)").fetchall()}
+
+
+def add_custom_column(conn, column_name):
+    """Add column_name to METADATA (defaulting existing rows to "missing")
+    if it isn't already present. Returns True if it was newly added."""
+    validate_column_name(column_name)
+    if column_name in existing_metadata_columns(conn):
+        return False
+    conn.execute("ALTER TABLE METADATA ADD COLUMN %s TEXT" % column_name)
+    conn.execute("UPDATE METADATA SET %s = 'missing'" % column_name)
+    conn.commit()
+    return True
 
 
 def normalize_value(value):
@@ -1205,26 +1292,6 @@ def build_accession(args):
 
 FASTA_SUFFIXES = (".fasta", ".fa", ".fna", ".fas", ".ffn")
 
-# Metadata fields a custom build can optionally supply per sample, beyond
-# the identity columns (biosample_acc/asm_acc) handled separately below.
-CUSTOM_METADATA_COLUMNS = [
-    "taxid",
-    "strain",
-    "collected_by",
-    "collection_date",
-    "geo_loc_name",
-    "isolation_source",
-    "lat_lon",
-    "serovar",
-    "sub_species",
-    "species",
-    "genus",
-    "host",
-    "host_disease",
-    "outbreak",
-    "srr",
-]
-
 
 def strip_fasta_suffix(filename):
     name = filename
@@ -1279,7 +1346,14 @@ def load_custom_metadata(metadata_path):
         sample_id = normalize_value(row[id_column])
         if not sample_id:
             continue
-        metadata_by_id[sample_id] = row.to_dict()
+        record = row.to_dict()
+        # sample_id/id are pure join keys with no METADATA schema meaning;
+        # drop them so they don't get mistaken for a new custom column.
+        # asm_acc/biosample_acc are kept even when used as the id column,
+        # since insert_custom_metadata reads them as explicit id overrides.
+        if id_column in ("sample_id", "id"):
+            record.pop(id_column, None)
+        metadata_by_id[sample_id] = record
 
     return metadata_by_id
 
@@ -1345,8 +1419,7 @@ def sketch_custom_sequences(fasta_paths, signature_dir, hash_number, kmer_size):
 
 
 def insert_custom_metadata(conn, metadata_by_id, verified):
-    columns = [
-        "biosample_acc",
+    fixed_columns = [
         "taxid",
         "strain",
         "collected_by",
@@ -1362,10 +1435,32 @@ def insert_custom_metadata(conn, metadata_by_id, verified):
         "host_disease",
         "outbreak",
         "srr",
-        "PDT_acc",
-        "PDS_acc",
-        "asm_acc",
     ]
+
+    # Anything in a supplied metadata row beyond the fixed schema fields
+    # and the identity columns (biosample_acc/asm_acc, handled separately
+    # below) becomes a new custom column - the same schema-extension
+    # mechanism `mashpit annotate` uses on an already-built database,
+    # applied here at build time instead.
+    custom_columns = sorted(
+        {
+            column
+            for row in metadata_by_id.values()
+            for column in row
+            if column not in RESERVED_METADATA_COLUMNS
+        }
+    )
+    for column in custom_columns:
+        add_custom_column(conn, column)
+
+    columns = (
+        ["biosample_acc"]
+        + fixed_columns
+        + custom_columns
+        + ["PDT_acc", "PDS_acc", "asm_acc"]
+    )
+    column_list = ", ".join(columns)
+    placeholders = ", ".join("?" for _ in columns)
 
     for sample_id in sorted(verified):
         row = metadata_by_id.get(sample_id, {})
@@ -1384,19 +1479,13 @@ def insert_custom_metadata(conn, metadata_by_id, verified):
             "PDT_acc": "missing",
             "PDS_acc": "missing",
         }
-        for column in CUSTOM_METADATA_COLUMNS:
+        for column in fixed_columns + custom_columns:
             value = normalize_value(row.get(column, ""))
             values[column] = value if value else "missing"
 
         conn.execute(
-            """
-            INSERT OR REPLACE INTO METADATA (
-                biosample_acc, taxid, strain, collected_by, collection_date,
-                geo_loc_name, isolation_source, lat_lon, serovar, sub_species,
-                species, genus, host, host_disease, outbreak, srr, PDT_acc,
-                PDS_acc, asm_acc
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
+            "INSERT OR REPLACE INTO METADATA (%s) VALUES (%s)"
+            % (column_list, placeholders),
             [values[column] for column in columns],
         )
 
@@ -1459,6 +1548,165 @@ def build_custom(args):
         logging.info("Database complete: %s", db_folder)
         logging.info("Sequences included: %d", len(signature_paths))
         logging.info("Sequences excluded due to sketch errors: %d", len(errors))
+
+
+def resolve_database_file(database):
+    """Accept either a database folder (containing exactly one *.db file,
+    matching how `mashpit query` locates a database) or a direct .db path."""
+    database = Path(database)
+    if database.is_file() and database.suffix == ".db":
+        return database
+    if not database.is_dir():
+        raise FileNotFoundError("Database not found: %s" % database)
+
+    candidates = sorted(database.glob("*.db"))
+    if not candidates:
+        raise FileNotFoundError("No .db file found in %s" % database)
+    if len(candidates) > 1:
+        raise RuntimeError("Multiple .db files found in %s" % database)
+    return candidates[0]
+
+
+def load_annotation_values(values_path, key_column=None):
+    """Read a TSV keyed by asm_acc or biosample_acc (matching the real
+    METADATA columns, unlike load_custom_metadata's more permissive
+    sample_id/id matching - annotate always targets rows that already
+    exist in the database)."""
+    frame = pd.read_csv(values_path, sep="\t", dtype=str, low_memory=False)
+
+    if key_column:
+        if key_column not in frame.columns:
+            raise ValueError("--key column %r not found in %s" % (key_column, values_path))
+    else:
+        key_column = None
+        for candidate in ("asm_acc", "biosample_acc"):
+            if candidate in frame.columns:
+                key_column = candidate
+                break
+        if key_column is None:
+            raise ValueError(
+                "%s must have an asm_acc or biosample_acc column (or pass --key)"
+                % values_path
+            )
+
+    target_columns = [column for column in frame.columns if column != key_column]
+    if not target_columns:
+        raise ValueError(
+            "%s has no columns to add or update besides %s" % (values_path, key_column)
+        )
+
+    values_by_id = {}
+    for _, row in frame.iterrows():
+        identifier = normalize_value(row[key_column])
+        if not identifier:
+            continue
+        values_by_id[identifier] = {
+            column: normalize_value(row[column]) for column in target_columns
+        }
+
+    return key_column, target_columns, values_by_id
+
+
+def annotate_database(db_path, values_path, key_column=None):
+    db_path = Path(db_path)
+    conn = create_connection(str(db_path))
+    ensure_annotation_log_table(conn)
+
+    key_column, target_columns, values_by_id = load_annotation_values(
+        values_path, key_column
+    )
+    if key_column not in existing_metadata_columns(conn):
+        conn.close()
+        raise ValueError(
+            "%r is not a column in this database's METADATA table" % key_column
+        )
+    if not values_by_id:
+        conn.close()
+        raise ValueError("%s has no usable rows" % values_path)
+
+    # Validate every target column name up front: a bad name partway
+    # through target_columns must not leave earlier columns already added
+    # while the run as a whole fails.
+    try:
+        for column in target_columns:
+            validate_column_name(column)
+    except ValueError:
+        conn.close()
+        raise
+
+    added_columns = [
+        column for column in target_columns if add_custom_column(conn, column)
+    ]
+    conn.commit()
+
+    known_ids = {
+        row[0] for row in conn.execute("SELECT %s FROM METADATA" % key_column).fetchall()
+    }
+
+    assignments = ", ".join("%s = ?" % column for column in target_columns)
+    rows_updated = 0
+    unmatched_in_file = []
+
+    for identifier in sorted(values_by_id):
+        if identifier not in known_ids:
+            unmatched_in_file.append(identifier)
+            continue
+        values = values_by_id[identifier]
+        conn.execute(
+            "UPDATE METADATA SET %s WHERE %s = ?" % (assignments, key_column),
+            [values[column] or "missing" for column in target_columns] + [identifier],
+        )
+        rows_updated += 1
+
+    unmatched_in_database = sorted(known_ids - set(values_by_id))
+    conn.commit()
+
+    digest = hashlib.sha256(Path(values_path).read_bytes()).hexdigest()
+    conn.execute(
+        """
+        INSERT INTO ANNOTATION_LOG (
+            timestamp, key_column, columns_added, columns_updated,
+            values_file, values_file_sha256, rows_updated,
+            rows_unmatched_in_file, rows_unmatched_in_database
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            time.strftime("%Y-%m-%d %H:%M:%S"),
+            key_column,
+            ",".join(added_columns),
+            ",".join(target_columns),
+            Path(values_path).name,
+            digest,
+            rows_updated,
+            len(unmatched_in_file),
+            len(unmatched_in_database),
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    return {
+        "columns_added": added_columns,
+        "columns_updated": target_columns,
+        "rows_updated": rows_updated,
+        "unmatched_in_file": unmatched_in_file,
+        "unmatched_in_database": unmatched_in_database,
+    }
+
+
+def read_annotation_log(db_path):
+    conn = create_connection(str(db_path))
+    ensure_annotation_log_table(conn)
+    rows = conn.execute(
+        """
+        SELECT timestamp, key_column, columns_added, columns_updated,
+               values_file, values_file_sha256, rows_updated,
+               rows_unmatched_in_file, rows_unmatched_in_database
+        FROM ANNOTATION_LOG ORDER BY id
+        """
+    ).fetchall()
+    conn.close()
+    return rows
 
 
 def build(args):

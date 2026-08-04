@@ -24,6 +24,7 @@ Mashpit is designed for offline or resource-limited analysis, including deployme
 - **Local visualization:** Produce a query result table and a tree showing the relationship between the query and its closest database representatives.
 - **Offline operation:** After a database has been built, routine queries can be performed without uploading genomic data.
 - **Custom databases:** Build a database directly from local FASTA files, with no NCBI download at all - useful for proprietary or unpublished sequence collections.
+- **Extensible metadata:** Add your own custom columns to any existing database - taxon, accession, or custom - with a built-in, per-database change history.
 
 ## Mashpit 1.0 database design
 
@@ -161,7 +162,7 @@ Then run:
 mashpit build custom my_database --input-dir my_genomes/
 ```
 
-Optional metadata can be supplied as a TSV with a `sample_id` column (matching the filenames) plus any subset of the usual metadata fields (`strain`, `collection_date`, `geo_loc_name`, `host`, etc.); fields not supplied, or samples not listed, are recorded as `missing`:
+Optional metadata can be supplied as a TSV with a `sample_id` column (matching the filenames) plus any subset of the usual metadata fields (`strain`, `collection_date`, `geo_loc_name`, `host`, etc.) and/or your own custom columns; fields not supplied, or samples not listed, are recorded as `missing`:
 
 ```text
 sample_id   strain    collection_date   host
@@ -189,6 +190,31 @@ Use the radius option only after evaluating an appropriate value for the organis
 Before representative selection and download, Mashpit removes rows without valid assembly accessions. Selected assemblies that fail to download are retried automatically. After the configured retry limit, unavailable assemblies are removed from the representative set and recorded in the build log.
 
 This prevents missing assemblies from producing invalid database entries.
+
+## Annotating a database
+
+`mashpit annotate` adds or updates custom metadata columns on a database you've already built - taxon, accession, or custom - since all three share the same underlying metadata table. This is the place to attach your own project-specific fields (an internal lab ID, a project or batch code, an outbreak investigation code, anything not in Mashpit's built-in schema) without rebuilding the database.
+
+```bash
+mashpit annotate my_database --values project_metadata.tsv
+```
+
+`project_metadata.tsv` needs an `asm_acc` or `biosample_acc` column to match existing rows, plus whatever columns you want to add or update:
+
+```text
+asm_acc            project_batch   internal_lab_id
+GCA_000000001.1    Batch01         LAB-001
+```
+
+Columns not already present in the database are added automatically. Rows in the database not mentioned in your file keep their existing values (or are recorded as `missing` if the column is new); ids in your file with no matching database row are reported, not treated as an error.
+
+Every `mashpit annotate` run is recorded in the database itself, so you always have a record of what changed and when:
+
+```bash
+mashpit annotate my_database --history
+```
+
+This works on databases built with older Mashpit versions too - the history table is created automatically the first time you annotate a database that doesn't have one yet, so nothing needs to be rebuilt.
 
 ## Querying a database
 

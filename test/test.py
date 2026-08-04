@@ -22,19 +22,25 @@ from mashpit import gui as gui_module
 from mashpit import query as query_module
 from mashpit.streamlit_app import safe_filename, validate_database
 from mashpit.build import (
+    add_custom_column,
+    annotate_database,
     collect_custom_sequences,
     create_connection,
     create_database,
     download_release_files,
     download_representatives,
+    ensure_annotation_log_table,
     fetch_accession_metadata,
     find_local_fasta_files,
     insert_accession_metadata,
     insert_custom_metadata,
     insert_metadata,
+    load_annotation_values,
     load_custom_metadata,
     load_metadata,
     load_tree_graph,
+    read_annotation_log,
+    resolve_database_file,
     resolve_release,
     safe_extract_tar,
     select_all_representatives,
@@ -43,6 +49,7 @@ from mashpit.build import (
     sketch_custom_sequences,
     strip_fasta_suffix,
     target_key,
+    validate_column_name,
     validate_custom_args,
     validate_pathogen_name,
 )
@@ -1357,6 +1364,35 @@ class TestInsertCustomMetadata(unittest.TestCase):
 
         self.assertEqual(row, ("SAMN99999999", "sample1", "StrainA", "Homo sapiens"))
 
+    def test_accepts_arbitrary_custom_columns_not_in_the_fixed_schema(self):
+        # Regression test: insert_custom_metadata used to only recognize a
+        # fixed whitelist of column names and silently drop anything else
+        # in a --metadata file. Any column beyond the fixed schema fields
+        # must now be added to METADATA automatically.
+        conn = create_connection(":memory:")
+        create_database(conn)
+        verified = {"sample1": Path("/fake/sample1.fasta"), "sample2": Path("/fake/sample2.fasta")}
+        metadata_by_id = {
+            "sample1": {"project_batch": "Batch01", "strain": "StrainA"},
+        }
+
+        insert_custom_metadata(conn, metadata_by_id, verified)
+
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT asm_acc, strain, project_batch FROM METADATA ORDER BY asm_acc"
+        )
+        rows = cursor.fetchall()
+        conn.close()
+
+        self.assertEqual(
+            rows,
+            [
+                ("sample1", "StrainA", "Batch01"),
+                ("sample2", "missing", "missing"),
+            ],
+        )
+
 
 class TestValidateCustomArgs(unittest.TestCase):
     def test_rejects_missing_input_dir(self):
@@ -1486,6 +1522,383 @@ class TestBuildCustom(unittest.TestCase):
             ):
                 if os.path.isfile(name):
                     os.remove(name)
+
+
+class TestValidateColumnName(unittest.TestCase):
+    def test_accepts_safe_identifiers(self):
+        validate_column_name("project_batch")  # must not raise
+        validate_column_name("_internal_id")  # must not raise
+
+    def test_rejects_unsafe_identifiers(self):
+        for bad_name in ("bad-name", "bad name", "1bad", "bad;DROP TABLE", ""):
+            with self.assertRaises(ValueError):
+                validate_column_name(bad_name)
+
+    def test_rejects_reserved_schema_columns_case_insensitively(self):
+        for reserved in ("strain", "Strain", "ASM_ACC", "PDS_acc"):
+            with self.assertRaises(ValueError):
+                validate_column_name(reserved)
+
+
+class TestAddCustomColumn(unittest.TestCase):
+    def test_adds_column_and_defaults_existing_rows_to_missing(self):
+        conn = create_connection(":memory:")
+        create_database(conn)
+        conn.execute(
+            "INSERT INTO METADATA (biosample_acc, asm_acc) VALUES ('s1', 'a1')"
+        )
+        conn.commit()
+
+        added = add_custom_column(conn, "project_batch")
+
+        cursor = conn.execute("SELECT project_batch FROM METADATA WHERE asm_acc = 'a1'")
+        value = cursor.fetchone()[0]
+        conn.close()
+
+        self.assertTrue(added)
+        self.assertEqual(value, "missing")
+
+    def test_is_idempotent_on_a_column_that_already_exists(self):
+        conn = create_connection(":memory:")
+        create_database(conn)
+
+        first = add_custom_column(conn, "project_batch")
+        second = add_custom_column(conn, "project_batch")
+        conn.close()
+
+        self.assertTrue(first)
+        self.assertFalse(second)
+
+    def test_rejects_reserved_and_invalid_names(self):
+        conn = create_connection(":memory:")
+        create_database(conn)
+        with self.assertRaises(ValueError):
+            add_custom_column(conn, "strain")
+        with self.assertRaises(ValueError):
+            add_custom_column(conn, "bad-name")
+        conn.close()
+
+
+class TestLoadAnnotationValues(unittest.TestCase):
+    def test_auto_detects_asm_acc(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "values.tsv"
+            path.write_text("asm_acc\tproject_batch\nsample1\tBatch01\n")
+            key_column, target_columns, values_by_id = load_annotation_values(path)
+            self.assertEqual(key_column, "asm_acc")
+            self.assertEqual(target_columns, ["project_batch"])
+            self.assertEqual(values_by_id["sample1"]["project_batch"], "Batch01")
+
+    def test_prefers_asm_acc_over_biosample_acc_when_both_present(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "values.tsv"
+            path.write_text(
+                "asm_acc\tbiosample_acc\tproject_batch\nsample1\tSAMN001\tBatch01\n"
+            )
+            key_column, _, _ = load_annotation_values(path)
+            self.assertEqual(key_column, "asm_acc")
+
+    def test_explicit_key_overrides_auto_detection(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "values.tsv"
+            path.write_text(
+                "asm_acc\tbiosample_acc\tproject_batch\nsample1\tSAMN001\tBatch01\n"
+            )
+            key_column, _, values_by_id = load_annotation_values(
+                path, key_column="biosample_acc"
+            )
+            self.assertEqual(key_column, "biosample_acc")
+            self.assertIn("SAMN001", values_by_id)
+
+    def test_raises_without_a_recognized_key_column(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "values.tsv"
+            path.write_text("sample_id\tproject_batch\nsample1\tBatch01\n")
+            with self.assertRaises(ValueError):
+                load_annotation_values(path)
+
+    def test_raises_when_no_columns_to_add_besides_the_key(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "values.tsv"
+            path.write_text("asm_acc\nsample1\n")
+            with self.assertRaises(ValueError):
+                load_annotation_values(path)
+
+
+class TestResolveDatabaseFile(unittest.TestCase):
+    def test_accepts_a_direct_db_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "my.db"
+            db_path.touch()
+            self.assertEqual(resolve_database_file(db_path), db_path)
+
+    def test_resolves_a_single_db_file_inside_a_folder(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            db_path = tmp / "my_database.db"
+            db_path.touch()
+            self.assertEqual(resolve_database_file(tmp), db_path)
+
+    def test_raises_when_folder_has_no_db_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(FileNotFoundError):
+                resolve_database_file(tmp)
+
+    def test_raises_when_folder_has_multiple_db_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            (tmp / "a.db").touch()
+            (tmp / "b.db").touch()
+            with self.assertRaises(RuntimeError):
+                resolve_database_file(tmp)
+
+    def test_raises_for_a_nonexistent_path(self):
+        with self.assertRaises(FileNotFoundError):
+            resolve_database_file("/no/such/path")
+
+
+class TestEnsureAnnotationLogTable(unittest.TestCase):
+    def test_is_idempotent(self):
+        conn = create_connection(":memory:")
+        ensure_annotation_log_table(conn)
+        ensure_annotation_log_table(conn)  # must not raise
+        cursor = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='ANNOTATION_LOG'"
+        )
+        self.assertIsNotNone(cursor.fetchone())
+        conn.close()
+
+
+class TestAnnotateDatabase(unittest.TestCase):
+    # These tests build the METADATA table directly (bypassing both the
+    # taxon and custom build paths) to prove annotate_database only cares
+    # about the METADATA table's schema, not how the database was built -
+    # the same code path applies equally to a taxon-built database, an
+    # already-built accession database, or a custom one.
+    def _taxon_shaped_db(self, tmp_dir):
+        db_path = Path(tmp_dir) / "taxon_like.db"
+        conn = create_connection(str(db_path))
+        create_database(conn)
+        conn.execute(
+            "INSERT INTO METADATA (biosample_acc, asm_acc, PDS_acc) "
+            "VALUES ('SAMN001', 'GCA_000000001.1', 'PDS000000001.1')"
+        )
+        conn.execute(
+            "INSERT INTO METADATA (biosample_acc, asm_acc, PDS_acc) "
+            "VALUES ('SAMN002', 'GCA_000000002.1', 'PDS000000001.1')"
+        )
+        conn.commit()
+        conn.close()
+        return db_path
+
+    def test_adds_and_populates_a_new_column_on_a_taxon_shaped_database(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = self._taxon_shaped_db(tmp)
+            values_path = Path(tmp) / "values.tsv"
+            values_path.write_text(
+                "asm_acc\toutbreak_investigation_code\n"
+                "GCA_000000001.1\tOUT-2026-01\n"
+            )
+
+            summary = annotate_database(db_path, values_path)
+
+            conn = create_connection(str(db_path))
+            rows = conn.execute(
+                "SELECT asm_acc, outbreak_investigation_code FROM METADATA "
+                "ORDER BY asm_acc"
+            ).fetchall()
+            conn.close()
+
+            self.assertEqual(summary["columns_added"], ["outbreak_investigation_code"])
+            self.assertEqual(summary["rows_updated"], 1)
+            self.assertEqual(summary["unmatched_in_database"], ["GCA_000000002.1"])
+            self.assertEqual(
+                rows,
+                [
+                    ("GCA_000000001.1", "OUT-2026-01"),
+                    ("GCA_000000002.1", "missing"),
+                ],
+            )
+
+    def test_works_identically_on_a_custom_built_database(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "custom_like.db"
+            conn = create_connection(str(db_path))
+            create_database(conn)
+            insert_custom_metadata(
+                conn, {}, {"sample1": Path("/fake/sample1.fasta")}
+            )
+            conn.close()
+
+            values_path = Path(tmp) / "values.tsv"
+            values_path.write_text("asm_acc\tproject_batch\nsample1\tBatch01\n")
+
+            summary = annotate_database(db_path, values_path)
+            self.assertEqual(summary["columns_added"], ["project_batch"])
+            self.assertEqual(summary["rows_updated"], 1)
+
+    def test_reports_unmatched_ids_in_the_values_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = self._taxon_shaped_db(tmp)
+            values_path = Path(tmp) / "values.tsv"
+            values_path.write_text(
+                "asm_acc\tproject_batch\nGCA_999999999.1\tBatch01\n"
+            )
+
+            summary = annotate_database(db_path, values_path)
+            self.assertEqual(summary["unmatched_in_file"], ["GCA_999999999.1"])
+            self.assertEqual(summary["rows_updated"], 0)
+
+    def test_records_an_annotation_log_entry_with_a_verifiable_file_hash(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = self._taxon_shaped_db(tmp)
+            values_path = Path(tmp) / "values.tsv"
+            values_path.write_text(
+                "asm_acc\tproject_batch\nGCA_000000001.1\tBatch01\n"
+            )
+
+            annotate_database(db_path, values_path)
+
+            log_rows = read_annotation_log(db_path)
+            self.assertEqual(len(log_rows), 1)
+            (
+                timestamp, key_column, columns_added, columns_updated,
+                values_file, values_file_sha256, rows_updated,
+                unmatched_in_file, unmatched_in_database,
+            ) = log_rows[0]
+
+            self.assertTrue(timestamp)
+            self.assertEqual(key_column, "asm_acc")
+            self.assertEqual(columns_added, "project_batch")
+            self.assertEqual(
+                values_file_sha256,
+                hashlib.sha256(values_path.read_bytes()).hexdigest(),
+            )
+            self.assertEqual(rows_updated, 1)
+
+    def test_second_annotate_call_adds_a_second_column_without_disturbing_the_first(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = self._taxon_shaped_db(tmp)
+            first_values = Path(tmp) / "first.tsv"
+            first_values.write_text(
+                "asm_acc\tproject_batch\nGCA_000000001.1\tBatch01\n"
+            )
+            second_values = Path(tmp) / "second.tsv"
+            second_values.write_text(
+                "asm_acc\tsequencing_facility\nGCA_000000001.1\tLabX\n"
+            )
+
+            annotate_database(db_path, first_values)
+            annotate_database(db_path, second_values)
+
+            conn = create_connection(str(db_path))
+            row = conn.execute(
+                "SELECT project_batch, sequencing_facility FROM METADATA "
+                "WHERE asm_acc = 'GCA_000000001.1'"
+            ).fetchone()
+            conn.close()
+
+            self.assertEqual(row, ("Batch01", "LabX"))
+            self.assertEqual(len(read_annotation_log(db_path)), 2)
+
+    def test_is_backward_compatible_with_a_database_predating_annotation_log(self):
+        # Simulates a database built before ANNOTATION_LOG existed: only
+        # METADATA is created, bypassing create_database entirely.
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "old_style.db"
+            conn = create_connection(str(db_path))
+            conn.execute(
+                """
+                CREATE TABLE METADATA (
+                    biosample_acc TEXT PRIMARY KEY,
+                    taxid INTEGER, strain TEXT, collected_by TEXT,
+                    collection_date TEXT, geo_loc_name TEXT,
+                    isolation_source TEXT, lat_lon TEXT, serovar TEXT,
+                    sub_species TEXT, species TEXT, genus TEXT, host TEXT,
+                    host_disease TEXT, outbreak TEXT, srr TEXT,
+                    PDT_acc TEXT, PDS_acc TEXT, asm_acc TEXT
+                )
+                """
+            )
+            conn.execute(
+                "INSERT INTO METADATA (biosample_acc, asm_acc) VALUES ('s1', 'a1')"
+            )
+            conn.commit()
+            conn.close()
+
+            self.assertEqual(read_annotation_log(db_path), [])
+
+            values_path = Path(tmp) / "values.tsv"
+            values_path.write_text("asm_acc\tproject_batch\na1\tBatch01\n")
+            summary = annotate_database(db_path, values_path)
+
+            self.assertEqual(summary["columns_added"], ["project_batch"])
+            self.assertEqual(len(read_annotation_log(db_path)), 1)
+
+    def test_rejects_a_key_column_not_present_in_metadata(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = self._taxon_shaped_db(tmp)
+            values_path = Path(tmp) / "values.tsv"
+            values_path.write_text("sample_id\tproject_batch\nx\tBatch01\n")
+            with self.assertRaises(ValueError):
+                annotate_database(db_path, values_path, key_column="sample_id")
+
+
+class TestAnnotateCli(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.input_dir = Path(tempfile.mkdtemp(prefix="mashpit_annotate_input_"))
+        (cls.input_dir / "sample1.fasta").write_text(">c1\n" + "ACGTACGTAC" * 10 + "\n")
+
+        cls.build_result = subprocess.run(
+            [
+                "mashpit", "build", "custom", "test_annotate_db",
+                "--input-dir", str(cls.input_dir),
+            ],
+            capture_output=True,
+            text=True,
+        )
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.input_dir, ignore_errors=True)
+        shutil.rmtree("test_annotate_db", ignore_errors=True)
+        for file in os.listdir():
+            if file.endswith(".log"):
+                os.remove(file)
+
+    def test_build_succeeded(self):
+        self.assertEqual(self.build_result.returncode, 0, self.build_result.stderr)
+
+    def test_annotate_adds_column_via_cli(self):
+        values_path = self.input_dir.parent / "mashpit_annotate_values.tsv"
+        values_path.write_text("asm_acc\tproject_batch\nsample1\tBatch01\n")
+        try:
+            result = subprocess.run(
+                ["mashpit", "annotate", "test_annotate_db", "--values", str(values_path)],
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("project_batch", result.stdout)
+
+            conn = create_connection("test_annotate_db/test_annotate_db.db")
+            value = conn.execute(
+                "SELECT project_batch FROM METADATA WHERE asm_acc = 'sample1'"
+            ).fetchone()[0]
+            conn.close()
+            self.assertEqual(value, "Batch01")
+
+            history = subprocess.run(
+                ["mashpit", "annotate", "test_annotate_db", "--history"],
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(history.returncode, 0, history.stderr)
+            self.assertIn("project_batch", history.stdout)
+        finally:
+            if values_path.exists():
+                values_path.unlink()
 
 
 class TestSafeFilename(unittest.TestCase):

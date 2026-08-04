@@ -4,6 +4,7 @@ import argparse
 import sys
 
 from mashpit import __version__
+from mashpit import annotate
 from mashpit import build
 from mashpit import gui
 from mashpit import query
@@ -48,6 +49,10 @@ def commandToArgs(commandline):
     subparser_gui = subparsers.add_parser(
         "gui",
         help="Launch the Streamlit GUI",
+    )
+    subparser_annotate = subparsers.add_parser(
+        "annotate",
+        help="Add or update custom metadata columns on an existing database",
     )
 
     # Build arguments
@@ -112,8 +117,8 @@ def commandToArgs(commandline):
             "optional TSV for custom builds with a sample_id column "
             "(matching --input-dir filenames) plus any subset of the "
             "METADATA table's other columns (strain, collection_date, "
-            "geo_loc_name, host, etc.); fields not supplied are recorded "
-            "as 'missing'"
+            "geo_loc_name, host, etc.) and/or your own custom columns; "
+            "fields not supplied are recorded as 'missing'"
         ),
     )
     subparser_build.add_argument(
@@ -203,6 +208,31 @@ def commandToArgs(commandline):
         help="port for the Streamlit server (default: Streamlit's own default, 8501)",
     )
     subparser_gui.set_defaults(func=gui.gui)
+
+    # Annotate arguments
+    subparser_annotate.add_argument(
+        "database",
+        help="path to the database folder (or a .db file directly)",
+    )
+    subparser_annotate.add_argument(
+        "--values",
+        help=(
+            "TSV with an asm_acc or biosample_acc column plus the columns "
+            "to add or update; columns not already in METADATA are added "
+            "automatically"
+        ),
+    )
+    subparser_annotate.add_argument(
+        "--key",
+        choices=["asm_acc", "biosample_acc"],
+        help="column to match rows by; auto-detected from --values if omitted",
+    )
+    subparser_annotate.add_argument(
+        "--history",
+        action="store_true",
+        help="print this database's annotation history instead of applying changes",
+    )
+    subparser_annotate.set_defaults(func=annotate.annotate)
 
     return parser.parse_args(commandline)
 
