@@ -22,7 +22,7 @@ import pandas as pd
 import requests
 import screed
 from Bio import Entrez, Phylo
-from sourmash import MinHash, SourmashSignature, save_signatures
+from sourmash import MinHash, SourmashSignature, load_file_as_signatures, save_signatures
 from tqdm import tqdm
 
 
@@ -787,6 +787,114 @@ def sketch_assemblies(representatives, verified, signature_dir, hash_number, kme
     return signature_paths
 
 
+MAX_SIGNATURE_SHARDS = 128
+SIGNATURES_PER_SHARD = 100
+
+
+def compute_shard_count(total_signatures):
+    # One shard per ~100 signatures keeps every shard comfortably above the
+    # per-file overhead floor (loading gets measurably slower below roughly
+    # 10-20 signatures/shard), while capping at 128 avoids sharding beyond
+    # what any realistic number of query-time worker processes can use -
+    # shard count only needs to exceed the querying machine's core count,
+    # not scale forever with database size.
+    return max(1, min(MAX_SIGNATURE_SHARDS, total_signatures // SIGNATURES_PER_SHARD))
+
+
+def write_signature_shards(signatures, sig_dir, nshards):
+    """Write signatures into nshards files under sig_dir, plus a
+    name -> shard-filename manifest so a specific signature can be found
+    without re-scanning every shard (see fetch_signatures_by_name)."""
+    sig_dir = Path(sig_dir)
+    sig_dir.mkdir(parents=True, exist_ok=True)
+
+    quotient, remainder = divmod(len(signatures), nshards)
+    manifest_rows = []
+    index = 0
+    for shard_index in range(nshards):
+        size = quotient + (1 if shard_index < remainder else 0)
+        chunk = signatures[index : index + size]
+        index += size
+        if not chunk:
+            continue
+
+        shard_name = "shard_%04d.sig" % shard_index
+        with (sig_dir / shard_name).open("wt", encoding="utf-8") as handle:
+            save_signatures(chunk, fp=handle)
+        for signature in chunk:
+            manifest_rows.append((str(signature), shard_name))
+
+    with (sig_dir / "manifest.tsv").open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.writer(handle, delimiter="\t")
+        writer.writerow(["name", "shard"])
+        writer.writerows(manifest_rows)
+
+
+def is_sharded_sig(sig_path):
+    return Path(sig_path).is_dir()
+
+
+def list_shard_files(sig_dir):
+    return sorted(Path(sig_dir).glob("shard_*.sig"))
+
+
+def read_shard_manifest(sig_dir):
+    manifest_path = Path(sig_dir) / "manifest.tsv"
+    manifest = {}
+    with manifest_path.open("r", encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle, delimiter="\t")
+        for row in reader:
+            manifest[row["name"]] = row["shard"]
+    return manifest
+
+
+def fetch_signatures_by_name(sig_dir, names):
+    """Load just the signatures for `names` out of a sharded database,
+    touching only the shard files that actually contain them - used by
+    query-time tree building, which only needs a handful of top hits, not
+    the full database."""
+    names = set(names)
+    if not names:
+        return []
+
+    manifest = read_shard_manifest(sig_dir)
+    needed_shards = sorted({manifest[name] for name in names if name in manifest})
+
+    found = []
+    for shard_name in needed_shards:
+        for signature in load_file_as_signatures(str(Path(sig_dir) / shard_name)):
+            if str(signature) in names:
+                found.append(signature)
+    return found
+
+
+def load_all_signatures(sig_path):
+    """Load every signature from either a single merged .sig file or a
+    sharded .sig directory - used where the full in-memory list is needed
+    (reshard, and querying an un-sharded database)."""
+    sig_path = Path(sig_path)
+    if sig_path.is_dir():
+        signatures = []
+        for shard_file in list_shard_files(sig_path):
+            signatures.extend(load_file_as_signatures(str(shard_file)))
+        return signatures
+    return list(load_file_as_signatures(str(sig_path)))
+
+
+def write_signatures(signatures, output_path, nshards=None):
+    """Write signatures to output_path as a single file (nshards == 1) or a
+    sharded directory of the same name - the layout merge_signatures and
+    reshard_database both produce."""
+    if nshards is None:
+        nshards = compute_shard_count(len(signatures))
+
+    if nshards <= 1:
+        with Path(output_path).open("wt", encoding="utf-8") as handle:
+            save_signatures(signatures, fp=handle)
+    else:
+        write_signature_shards(signatures, output_path, nshards)
+
+
 def merge_signatures(args, db_folder, signature_paths):
     signatures = []
     from sourmash import load_one_signature
@@ -795,8 +903,49 @@ def merge_signatures(args, db_folder, signature_paths):
         signatures.append(load_one_signature(str(signature_paths[accession])))
 
     output_path = db_folder / ("%s.sig" % args.name)
-    with output_path.open("wt", encoding="utf-8") as handle:
-        save_signatures(signatures, fp=handle)
+    write_signatures(signatures, output_path)
+
+
+def resolve_sig_path(database):
+    """Mirrors resolve_database_file: find the *.sig entry (a single file,
+    or a sharded directory) next to a database's .db file."""
+    db_path = resolve_database_file(database)
+    sig_path = db_path.with_suffix(".sig")
+    if not sig_path.exists():
+        raise FileNotFoundError("Signature file/directory not found: %s" % sig_path)
+    return sig_path
+
+
+def reshard_database(database, nshards=None):
+    """Rewrite an already-built database's signature storage into (or out
+    of) shards, without touching its METADATA/REPRESENTATIVE tables or
+    re-sketching anything - a one-time, local, offline operation."""
+    sig_path = resolve_sig_path(database)
+
+    signatures = load_all_signatures(sig_path)
+    if not signatures:
+        raise ValueError("No signatures found in %s" % sig_path)
+
+    if nshards is None:
+        nshards = compute_shard_count(len(signatures))
+    else:
+        nshards = max(1, min(int(nshards), len(signatures)))
+
+    tmp_path = sig_path.with_name(sig_path.name + ".reshard-tmp")
+    if tmp_path.is_dir():
+        shutil.rmtree(tmp_path)
+    elif tmp_path.exists():
+        tmp_path.unlink()
+
+    write_signatures(signatures, tmp_path, nshards)
+
+    if sig_path.is_dir():
+        shutil.rmtree(sig_path)
+    else:
+        sig_path.unlink()
+    tmp_path.rename(sig_path)
+
+    return {"signature_count": len(signatures), "shards": nshards}
 
 
 def insert_metadata(conn, metadata, representatives, radius, verified, attempts):

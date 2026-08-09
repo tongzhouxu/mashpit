@@ -2,18 +2,26 @@
 import os
 import glob
 import logging
+import multiprocessing as mp
 import ntpath
 import screed
+import shutil
 import sourmash
 import heapq
 import tempfile
 import time
 import pandas as pd
 
+from functools import partial
 from skbio import DistanceMatrix
 from skbio.tree import nj
 from phytreeviz import TreeViz
-from mashpit.build import create_connection
+from mashpit.build import (
+    create_connection,
+    fetch_signatures_by_name,
+    is_sharded_sig,
+    list_shard_files,
+)
 from operator import itemgetter
 from sourmash import (
     SourmashSignature,
@@ -25,6 +33,50 @@ from sourmash import (
 
 class MashtreeSkipped(Exception):
     pass
+
+
+# Module-level (not nested) so it can be pickled to worker processes under
+# the spawn start method - each worker loads the query signature once, at
+# pool startup, rather than once per shard.
+_worker_query_sig = None
+
+
+def _init_shard_worker(query_sig_path):
+    global _worker_query_sig
+    _worker_query_sig = load_one_signature(query_sig_path)
+
+
+def _load_and_compare_shard(shard_path, top_n):
+    # Compare inside the worker and return only a small (name, similarity)
+    # top-N, never the loaded signature objects themselves - shipping full
+    # signatures back through multiprocessing IPC costs more than the
+    # parallel load saves (measured: slower than a single-threaded load).
+    results = [
+        (str(signature), _worker_query_sig.jaccard(signature))
+        for signature in load_file_as_signatures(shard_path)
+    ]
+    return heapq.nlargest(top_n, results, key=itemgetter(1))
+
+
+def compare_sharded_database(sig_dir, query_sig_path, top_n, max_workers=None):
+    shard_files = [str(path) for path in list_shard_files(sig_dir)]
+    if not shard_files:
+        raise RuntimeError("No shard files found in %s" % sig_dir)
+
+    nworkers = min(len(shard_files), max_workers or os.cpu_count() or 1)
+    worker = partial(_load_and_compare_shard, top_n=top_n)
+
+    with mp.Pool(
+        nworkers, initializer=_init_shard_worker, initargs=(query_sig_path,)
+    ) as pool:
+        shard_results = pool.map(worker, shard_files)
+
+    merged = heapq.nlargest(
+        top_n,
+        (item for chunk in shard_results for item in chunk),
+        key=itemgetter(1),
+    )
+    return dict(merged), nworkers
 
 
 def get_query_sig(query_path, query_name, hash_number, kmer_size, output_dir):
@@ -256,47 +308,81 @@ def query(args):
     # Sketch the query sample and load the signature. Written to a private
     # temp directory rather than beside the input assembly, so a read-only
     # or shared input location doesn't break the query and no stray file of
-    # the same name there is ever touched.
-    with tempfile.TemporaryDirectory(prefix="mashpit-query-sketch-") as sketch_dir:
+    # the same name there is ever touched. Kept alive through the database
+    # comparison (not just the sketch step) since the sharded path needs
+    # query_sig_path on disk to hand to worker processes.
+    sketch_dir = tempfile.mkdtemp(prefix="mashpit-query-sketch-")
+    try:
         query_sig_path = get_query_sig(
             query_path, query_name, hash_number, kmer_size, sketch_dir
         )
         query_sig = load_one_signature(query_sig_path)
 
-    time_finish_sketch = time.time()
-    logging.info(
-        f"Query sample sketched in {time_finish_sketch-time_start:.2f} seconds"
-    )
+        time_finish_sketch = time.time()
+        logging.info(
+            f"Query sample sketched in {time_finish_sketch-time_start:.2f} seconds"
+        )
 
-    asm_similarity_dict = {}
-    database_sig = list(load_file_as_signatures(sig_path))
+        database_sig = None
+        if is_sharded_sig(sig_path):
+            sorted_asm_similarity_dict, nworkers = compare_sharded_database(
+                sig_path,
+                query_sig_path,
+                number_results,
+                getattr(args, "threads", None),
+            )
+            time_calculate_similarity = time.time()
+            logging.info(
+                f"Database loaded and compared ({nworkers} parallel workers) in "
+                f"{time_calculate_similarity-time_finish_sketch:.2f} seconds"
+            )
+        else:
+            database_sig = list(load_file_as_signatures(sig_path))
 
-    time_load_database_sig = time.time()
-    logging.info(
-        f"Database signatures loaded in {time_load_database_sig-time_finish_sketch:.2f} seconds"
-    )
+            time_load_database_sig = time.time()
+            logging.info(
+                f"Database signatures loaded in {time_load_database_sig-time_finish_sketch:.2f} seconds"
+            )
 
-    for sig in database_sig:
-        similarity = query_sig.jaccard(sig)
-        asm_similarity_dict[str(sig)] = similarity
+            asm_similarity_dict = {}
+            for sig in database_sig:
+                similarity = query_sig.jaccard(sig)
+                asm_similarity_dict[str(sig)] = similarity
 
-    time_calculate_similarity = time.time()
-    logging.info(
-        f"Jaccard similarity calculated in {time_calculate_similarity-time_load_database_sig:.2f} seconds"
-    )
+            time_calculate_similarity = time.time()
+            logging.info(
+                f"Jaccard similarity calculated in {time_calculate_similarity-time_load_database_sig:.2f} seconds"
+            )
 
-    # get the top results
-    top_items = heapq.nlargest(
-        number_results, asm_similarity_dict.items(), key=itemgetter(1)
-    )
-    sorted_asm_similarity_dict = dict(top_items)
+            top_items = heapq.nlargest(
+                number_results, asm_similarity_dict.items(), key=itemgetter(1)
+            )
+            sorted_asm_similarity_dict = dict(top_items)
 
-    time_sort = time.time()
-    logging.info(
-        f"Top {number_results} results sorted in {time_sort-time_calculate_similarity:.2f} seconds"
-    )
+        time_sort = time.time()
+        logging.info(
+            f"Top {number_results} results sorted in {time_sort-time_calculate_similarity:.2f} seconds"
+        )
 
-    output_df = generate_query_table(conn, sorted_asm_similarity_dict)
+        if database_sig is None:
+            # Sharded database: only the (typically small) set of hits that
+            # actually clear --threshold is needed to build the tree, so
+            # fetch just those instead of the full database - the same
+            # candidate set generate_mashtree derives internally below.
+            top_score = next(iter(sorted_asm_similarity_dict.values()), 0.0)
+            candidate_names = [
+                name
+                for name, score in sorted_asm_similarity_dict.items()
+                if score >= min_similarity
+            ]
+            if top_score >= min_similarity and len(candidate_names) >= 2:
+                database_sig = fetch_signatures_by_name(sig_path, candidate_names)
+            else:
+                database_sig = []
+
+        output_df = generate_query_table(conn, sorted_asm_similarity_dict)
+    finally:
+        shutil.rmtree(sketch_dir, ignore_errors=True)
     output_df.to_csv(query_name + "_representative_matches.csv", index=True)
 
     c.execute("SELECT value FROM DESC WHERE name = 'Type';")

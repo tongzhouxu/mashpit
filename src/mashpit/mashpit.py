@@ -8,6 +8,7 @@ from mashpit import annotate
 from mashpit import build
 from mashpit import gui
 from mashpit import query
+from mashpit import reshard
 
 
 def positive_int(value):
@@ -53,6 +54,10 @@ def commandToArgs(commandline):
     subparser_annotate = subparsers.add_parser(
         "annotate",
         help="Add or update custom metadata columns on an existing database",
+    )
+    subparser_reshard = subparsers.add_parser(
+        "reshard",
+        help="Rewrite a database's signature storage into parallel-loadable shards",
     )
 
     # Build arguments
@@ -199,6 +204,15 @@ def commandToArgs(commandline):
             "table, for taxon databases (default: 2)"
         ),
     )
+    subparser_query.add_argument(
+        "--threads",
+        type=positive_int,
+        help=(
+            "worker processes used to load and compare a sharded database "
+            "(default: all available cores); ignored for un-sharded "
+            "databases"
+        ),
+    )
     subparser_query.set_defaults(func=query.query)
 
     # GUI arguments
@@ -243,6 +257,22 @@ def commandToArgs(commandline):
         ),
     )
     subparser_annotate.set_defaults(func=annotate.annotate)
+
+    # Reshard arguments
+    subparser_reshard.add_argument(
+        "database",
+        help="path to the database folder (or a .db file directly)",
+    )
+    subparser_reshard.add_argument(
+        "--shards",
+        type=positive_int,
+        help=(
+            "number of shards to write (default: chosen automatically from "
+            "the signature count, capped at 128); pass 1 to merge shards "
+            "back into a single file"
+        ),
+    )
+    subparser_reshard.set_defaults(func=reshard.reshard)
 
     return parser.parse_args(commandline)
 

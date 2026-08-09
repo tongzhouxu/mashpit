@@ -25,24 +25,32 @@ from mashpit.build import (
     add_custom_column,
     annotate_database,
     collect_custom_sequences,
+    compute_shard_count,
     create_connection,
     create_database,
     download_release_files,
     download_representatives,
     ensure_annotation_log_table,
     fetch_accession_metadata,
+    fetch_signatures_by_name,
     find_local_fasta_files,
     insert_accession_metadata,
     insert_custom_metadata,
     insert_metadata,
+    is_sharded_sig,
     list_accessions,
+    list_shard_files,
+    load_all_signatures,
     load_annotation_values,
     load_custom_metadata,
     load_metadata,
     load_tree_graph,
     read_annotation_log,
+    read_shard_manifest,
+    reshard_database,
     resolve_database_file,
     resolve_release,
+    resolve_sig_path,
     safe_extract_tar,
     select_all_representatives,
     select_tree_representatives,
@@ -53,10 +61,13 @@ from mashpit.build import (
     validate_column_name,
     validate_custom_args,
     validate_pathogen_name,
+    write_signature_shards,
+    write_signatures,
 )
 from mashpit.mashpit import commandToArgs
 from mashpit.query import (
     MashtreeSkipped,
+    compare_sharded_database,
     generate_cluster_table,
     generate_mashtree,
     generate_query_table,
@@ -1525,6 +1536,212 @@ class TestBuildCustom(unittest.TestCase):
                     os.remove(name)
 
 
+class TestComputeShardCount(unittest.TestCase):
+    def test_small_database_gets_one_shard(self):
+        self.assertEqual(compute_shard_count(0), 1)
+        self.assertEqual(compute_shard_count(1), 1)
+        self.assertEqual(compute_shard_count(99), 1)
+
+    def test_scales_roughly_one_shard_per_hundred_signatures(self):
+        self.assertEqual(compute_shard_count(350), 3)
+        self.assertEqual(compute_shard_count(1000), 10)
+
+    def test_caps_at_max_shards(self):
+        self.assertEqual(compute_shard_count(1_000_000), 128)
+
+
+class TestWriteSignatureShards(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.signatures = [make_test_signature(f"sig{i:02d}", i) for i in range(20)]
+
+    def setUp(self):
+        self.sig_dir = Path(tempfile.mkdtemp(prefix="mashpit_shard_test_"))
+
+    def tearDown(self):
+        shutil.rmtree(self.sig_dir, ignore_errors=True)
+
+    def test_writes_requested_number_of_shard_files(self):
+        write_signature_shards(self.signatures, self.sig_dir, 4)
+        self.assertEqual(len(list_shard_files(self.sig_dir)), 4)
+
+    def test_manifest_maps_every_signature_to_an_existing_shard_file(self):
+        write_signature_shards(self.signatures, self.sig_dir, 4)
+        manifest = read_shard_manifest(self.sig_dir)
+        self.assertEqual(set(manifest), {sig.name for sig in self.signatures})
+        for shard_name in manifest.values():
+            self.assertTrue((self.sig_dir / shard_name).is_file())
+
+    def test_load_all_signatures_recovers_every_signature(self):
+        write_signature_shards(self.signatures, self.sig_dir, 4)
+        loaded_names = {str(sig) for sig in load_all_signatures(self.sig_dir)}
+        self.assertEqual(loaded_names, {str(sig) for sig in self.signatures})
+
+    def test_is_sharded_sig_distinguishes_directory_from_file(self):
+        write_signature_shards(self.signatures, self.sig_dir, 4)
+        self.assertTrue(is_sharded_sig(self.sig_dir))
+
+        single_file = self.sig_dir.parent / "single.sig"
+        with single_file.open("wt") as handle:
+            from sourmash import save_signatures
+
+            save_signatures(self.signatures, fp=handle)
+        try:
+            self.assertFalse(is_sharded_sig(single_file))
+        finally:
+            single_file.unlink()
+
+    def test_fetch_signatures_by_name_returns_only_requested_names(self):
+        write_signature_shards(self.signatures, self.sig_dir, 4)
+        wanted = {"sig01", "sig10", "sig19"}
+        fetched = fetch_signatures_by_name(self.sig_dir, wanted)
+        self.assertEqual({str(sig) for sig in fetched}, wanted)
+
+    def test_fetch_signatures_by_name_empty_names_returns_empty_without_error(self):
+        write_signature_shards(self.signatures, self.sig_dir, 4)
+        self.assertEqual(fetch_signatures_by_name(self.sig_dir, []), [])
+
+    def test_fetch_signatures_by_name_ignores_unknown_names(self):
+        write_signature_shards(self.signatures, self.sig_dir, 4)
+        fetched = fetch_signatures_by_name(self.sig_dir, {"sig01", "does_not_exist"})
+        self.assertEqual({str(sig) for sig in fetched}, {"sig01"})
+
+
+class TestWriteSignatures(unittest.TestCase):
+    def setUp(self):
+        self.tmp_dir = Path(tempfile.mkdtemp(prefix="mashpit_write_signatures_"))
+        self.signatures = [make_test_signature(f"sig{i}", i) for i in range(6)]
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp_dir, ignore_errors=True)
+
+    def test_single_shard_writes_a_plain_file(self):
+        output_path = self.tmp_dir / "database.sig"
+        write_signatures(self.signatures, output_path, nshards=1)
+        self.assertTrue(output_path.is_file())
+        loaded_names = {str(sig) for sig in load_all_signatures(output_path)}
+        self.assertEqual(loaded_names, {str(sig) for sig in self.signatures})
+
+    def test_multiple_shards_writes_a_directory(self):
+        output_path = self.tmp_dir / "database.sig"
+        write_signatures(self.signatures, output_path, nshards=3)
+        self.assertTrue(output_path.is_dir())
+        self.assertEqual(len(list_shard_files(output_path)), 3)
+
+    def test_default_shard_count_matches_compute_shard_count(self):
+        # 6 signatures is well under the 100-per-shard floor, so this must
+        # fall back to a single file exactly like an un-resharded database.
+        output_path = self.tmp_dir / "database.sig"
+        write_signatures(self.signatures, output_path)
+        self.assertTrue(output_path.is_file())
+
+
+class TestReshardDatabase(unittest.TestCase):
+    # Builds a tiny real database (schema + a small signature set) without
+    # going through the network-dependent build_taxon/build_accession
+    # paths, so this stays fast and hermetic.
+    def setUp(self):
+        self.db_folder = Path(tempfile.mkdtemp(prefix="mashpit_reshard_test_"))
+        self.db_name = "reshardtest"
+        conn = create_connection(str(self.db_folder / (self.db_name + ".db")))
+        create_database(conn)
+        conn.executemany(
+            "INSERT OR REPLACE INTO DESC(name, value) VALUES (?, ?)",
+            [("Type", "Custom"), ("Hash_number", "50"), ("Kmer_size", "21")],
+        )
+        conn.commit()
+        conn.close()
+
+        self.signatures = [make_test_signature(f"sig{i}", i) for i in range(6)]
+        self.sig_path = self.db_folder / (self.db_name + ".sig")
+        write_signatures(self.signatures, self.sig_path, nshards=1)
+
+    def tearDown(self):
+        shutil.rmtree(self.db_folder, ignore_errors=True)
+
+    def test_resolve_sig_path_finds_the_matching_sig_entry(self):
+        self.assertEqual(resolve_sig_path(self.db_folder), self.sig_path)
+
+    def test_explicit_shard_count_reshards_into_a_directory(self):
+        summary = reshard_database(self.db_folder, nshards=3)
+        self.assertEqual(summary, {"signature_count": 6, "shards": 3})
+        self.assertTrue(self.sig_path.is_dir())
+        self.assertEqual(len(list_shard_files(self.sig_path)), 3)
+
+    def test_reshard_preserves_every_signature(self):
+        reshard_database(self.db_folder, nshards=4)
+        loaded_names = {str(sig) for sig in load_all_signatures(self.sig_path)}
+        self.assertEqual(loaded_names, {str(sig) for sig in self.signatures})
+
+    def test_reshard_then_merge_back_to_one_file(self):
+        reshard_database(self.db_folder, nshards=4)
+        self.assertTrue(self.sig_path.is_dir())
+
+        summary = reshard_database(self.db_folder, nshards=1)
+        self.assertEqual(summary["shards"], 1)
+        self.assertTrue(self.sig_path.is_file())
+        loaded_names = {str(sig) for sig in load_all_signatures(self.sig_path)}
+        self.assertEqual(loaded_names, {str(sig) for sig in self.signatures})
+
+    def test_shard_count_is_capped_at_signature_count(self):
+        summary = reshard_database(self.db_folder, nshards=1000)
+        self.assertEqual(summary["shards"], 6)
+
+    def test_reshard_missing_database_raises(self):
+        missing = self.db_folder.parent / "does_not_exist"
+        with self.assertRaises(FileNotFoundError):
+            reshard_database(missing, nshards=2)
+
+
+class TestCompareShardedDatabase(unittest.TestCase):
+    # Verifies the parallel query-time path (query.py's
+    # compare_sharded_database) returns the same top-N similarities as a
+    # plain single-threaded jaccard loop over the same signatures - the
+    # correctness property that matters, independent of worker count.
+    def setUp(self):
+        self.sig_dir = Path(tempfile.mkdtemp(prefix="mashpit_compare_shard_test_"))
+        self.signatures = [make_test_signature(f"sig{i:02d}", i) for i in range(12)]
+        write_signature_shards(self.signatures, self.sig_dir, nshards=4)
+
+        self.query_dir = Path(tempfile.mkdtemp(prefix="mashpit_compare_shard_query_"))
+        self.query_sig = make_test_signature("query", seed_offset=1)
+        self.query_sig_path = self.query_dir / "query.sig"
+        with self.query_sig_path.open("wt") as handle:
+            from sourmash import save_signatures
+
+            save_signatures([self.query_sig], fp=handle)
+
+    def tearDown(self):
+        shutil.rmtree(self.sig_dir, ignore_errors=True)
+        shutil.rmtree(self.query_dir, ignore_errors=True)
+
+    def test_matches_single_threaded_jaccard_over_the_same_signatures(self):
+        expected = {
+            str(sig): self.query_sig.jaccard(sig) for sig in self.signatures
+        }
+
+        result, nworkers = compare_sharded_database(
+            self.sig_dir, str(self.query_sig_path), top_n=12, max_workers=2
+        )
+
+        self.assertEqual(nworkers, 2)
+        self.assertEqual(set(result), set(expected))
+        for name, similarity in expected.items():
+            self.assertAlmostEqual(result[name], similarity)
+
+    def test_top_n_limits_result_count(self):
+        result, _ = compare_sharded_database(
+            self.sig_dir, str(self.query_sig_path), top_n=3, max_workers=2
+        )
+        self.assertEqual(len(result), 3)
+
+    def test_worker_count_never_exceeds_shard_count(self):
+        _, nworkers = compare_sharded_database(
+            self.sig_dir, str(self.query_sig_path), top_n=12, max_workers=99
+        )
+        self.assertEqual(nworkers, 4)
+
+
 class TestValidateColumnName(unittest.TestCase):
     def test_accepts_safe_identifiers(self):
         validate_column_name("project_batch")  # must not raise
@@ -1948,6 +2165,100 @@ class TestAnnotateCli(unittest.TestCase):
         lines = result.stdout.strip().splitlines()
         self.assertEqual(lines[0], "asm_acc\tbiosample_acc")
         self.assertIn("sample1\tsample1", lines)
+
+
+class TestReshardCli(unittest.TestCase):
+    # End-to-end: build a small custom database (a handful of samples, so
+    # it builds as a single un-sharded .sig file by default), reshard it
+    # with an explicit --shards override, and confirm a real `mashpit
+    # query` against the sharded database returns byte-identical output to
+    # the same query run before resharding - the correctness property the
+    # whole feature depends on, exercised through the actual CLI rather
+    # than the internal compare_sharded_database function directly.
+    @classmethod
+    def setUpClass(cls):
+        cls.input_dir = Path(tempfile.mkdtemp(prefix="mashpit_reshard_input_"))
+        bases = "ACGT"
+        for index in range(6):
+            sequence = "".join(
+                bases[(i * 7 + index * 13) % 4] for i in range(400)
+            )
+            (cls.input_dir / f"sample{index}.fasta").write_text(
+                f">contig1\n{sequence}\n"
+            )
+
+        cls.build_result = subprocess.run(
+            [
+                "mashpit", "build", "custom", "test_reshard_db",
+                "--input-dir", str(cls.input_dir),
+            ],
+            capture_output=True,
+            text=True,
+        )
+
+        cls.query_dir = Path(tempfile.mkdtemp(prefix="mashpit_reshard_query_"))
+        cls.query_path = cls.query_dir / "query.fasta"
+        cls.query_path.write_text(
+            (cls.input_dir / "sample0.fasta").read_text()
+        )
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.input_dir, ignore_errors=True)
+        shutil.rmtree(cls.query_dir, ignore_errors=True)
+        shutil.rmtree("test_reshard_db", ignore_errors=True)
+        for file in os.listdir():
+            if file.endswith(".log"):
+                os.remove(file)
+
+    def tearDown(self):
+        for name in ("query_representative_matches.csv", "query_tree.newick", "query_tree.png"):
+            if os.path.isfile(name):
+                os.remove(name)
+
+    def test_build_succeeded(self):
+        self.assertEqual(self.build_result.returncode, 0, self.build_result.stderr)
+
+    def _run_query(self):
+        result = subprocess.run(
+            ["mashpit", "query", str(self.query_path), "test_reshard_db",
+             "--number", "10", "--threshold", "0.0"],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return Path("query_representative_matches.csv").read_text()
+
+    def test_query_matches_before_and_after_resharding(self):
+        unsharded_output = self._run_query()
+        os.remove("query_representative_matches.csv")
+
+        reshard_result = subprocess.run(
+            ["mashpit", "reshard", "test_reshard_db", "--shards", "3"],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(reshard_result.returncode, 0, reshard_result.stderr)
+        self.assertTrue(
+            Path("test_reshard_db/test_reshard_db.sig").is_dir()
+        )
+
+        sharded_output = self._run_query()
+        self.assertEqual(unsharded_output, sharded_output)
+
+    def test_reshard_back_to_single_file(self):
+        subprocess.run(
+            ["mashpit", "reshard", "test_reshard_db", "--shards", "3"],
+            capture_output=True,
+            text=True,
+        )
+        result = subprocess.run(
+            ["mashpit", "reshard", "test_reshard_db", "--shards", "1"],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(Path("test_reshard_db/test_reshard_db.sig").is_file())
 
 
 class TestSafeFilename(unittest.TestCase):

@@ -25,6 +25,7 @@ Mashpit is designed for offline or resource-limited analysis, including deployme
 - **Offline operation:** After a database has been built, routine queries can be performed without uploading genomic data.
 - **Custom databases:** Build a database directly from local FASTA files, with no NCBI download at all - useful for proprietary or unpublished sequence collections.
 - **Extensible metadata:** Add your own custom columns to any existing database - taxon, accession, or custom - with a built-in, per-database change history.
+- **Parallel database loading:** Large databases are automatically sharded so `mashpit query` loads and compares them across CPU cores instead of single-threaded.
 
 ## Mashpit 1.0 database design
 
@@ -94,7 +95,9 @@ A Mashpit database is stored in a directory containing the sketch database and i
 ```text
 DATABASE_NAME/
 ├── DATABASE_NAME.db               # sqlite metadata and representative tables
-├── DATABASE_NAME.sig              # merged sourmash signatures
+├── DATABASE_NAME.sig              # merged sourmash signatures (a single file for smaller
+│                                   #   databases, or a directory of shards for larger ones -
+│                                   #   see "Sharding a database for faster loading")
 ├── representatives.tsv            # taxon databases only
 ├── cluster_summary.tsv            # taxon databases only
 ├── unavailable_assemblies.tsv     # taxon/accession databases: accessions that could not be downloaded
@@ -224,6 +227,23 @@ mashpit annotate my_database --history
 
 This works on databases built with older Mashpit versions too - the history table is created automatically the first time you annotate a database that doesn't have one yet, so nothing needs to be rebuilt.
 
+## Sharding a database for faster loading
+
+Databases built with 100+ representatives are automatically split into multiple signature shards (a `DATABASE_NAME.sig/` directory of shard files instead of a single `DATABASE_NAME.sig` file), so `mashpit query` can load and compare shards across CPU cores in parallel rather than parsing one large file single-threaded. The shard count scales with database size (roughly one shard per 100 signatures, capped at 128) and query-time parallelism scales with whatever machine actually runs the query (all available cores by default, or `--threads` to cap it) - a database built once and distributed to others gets the same proportional speedup whether it's queried on a 4-core laptop or a many-core server.
+
+Databases built with an older Mashpit version, or small databases that stayed as a single file, can be resharded without rebuilding - a one-time, local, offline operation that only rewrites the `.sig` storage, leaving all metadata untouched:
+
+```bash
+mashpit reshard my_database
+```
+
+Pass `--shards` to override the automatic count, or `--shards 1` to merge shards back into a single file:
+
+```bash
+mashpit reshard my_database --shards 64
+mashpit reshard my_database --shards 1
+```
+
 ## Querying a database
 
 Run a query using an assembled genome in FASTA format:
@@ -239,6 +259,7 @@ Common query options include:
 --threshold              minimum similarity used when constructing the local result tree
 --annotation             metadata field used to annotate tree tips
 --tie-tolerance-hashes   sketch-hash tolerance used to flag near-top SNP clusters (taxon databases only)
+--threads                worker processes for a sharded database (default: all available cores)
 ```
 
 Example:
