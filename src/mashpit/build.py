@@ -932,18 +932,32 @@ def reshard_database(database, nshards=None):
         nshards = max(1, min(int(nshards), len(signatures)))
 
     tmp_path = sig_path.with_name(sig_path.name + ".reshard-tmp")
-    if tmp_path.is_dir():
-        shutil.rmtree(tmp_path)
-    elif tmp_path.exists():
-        tmp_path.unlink()
+    backup_path = sig_path.with_name(sig_path.name + ".reshard-backup")
+    for path in (tmp_path, backup_path):
+        if path.is_dir():
+            shutil.rmtree(path)
+        elif path.exists():
+            path.unlink()
 
     write_signatures(signatures, tmp_path, nshards)
 
-    if sig_path.is_dir():
-        shutil.rmtree(sig_path)
+    # Never delete the original before the replacement is confirmed in
+    # place. A rename (not a recursive delete) is what makes the risky
+    # window here effectively instantaneous regardless of shard count: an
+    # interruption at any point still leaves a valid signature store at
+    # sig_path - either the original (restored from backup_path on
+    # failure) or the new one, once installed.
+    sig_path.rename(backup_path)
+    try:
+        tmp_path.rename(sig_path)
+    except Exception:
+        backup_path.rename(sig_path)
+        raise
+
+    if backup_path.is_dir():
+        shutil.rmtree(backup_path)
     else:
-        sig_path.unlink()
-    tmp_path.rename(sig_path)
+        backup_path.unlink()
 
     return {"signature_count": len(signatures), "shards": nshards}
 
@@ -1522,7 +1536,55 @@ def collect_custom_sequences(input_dir, metadata_path):
     return fasta_paths, metadata_by_id
 
 
-def sketch_custom_sequences(fasta_paths, signature_dir, hash_number, kmer_size):
+def resolve_custom_identity(sample_id, row):
+    """The METADATA asm_acc/biosample_acc for sample_id, honoring a
+    --metadata override (see load_custom_metadata). Signatures are named
+    with the returned asm_acc (see sketch_custom_sequences) so that
+    query.py's asm_acc-keyed metadata lookup always finds a match, even
+    when it differs from the originating sample_id."""
+    asm_acc = normalize_value(row.get("asm_acc", "")) or sample_id
+    biosample_acc = normalize_value(row.get("biosample_acc", "")) or sample_id
+    return asm_acc, biosample_acc
+
+
+def validate_custom_identity_uniqueness(fasta_paths, metadata_by_id):
+    """--metadata can override asm_acc/biosample_acc per sample; if two
+    samples resolve to the same value, inserting both would either fail
+    outright or (previously, under INSERT OR REPLACE) silently drop one
+    sample's metadata row while its signature stayed in the database.
+    Catch that before any sketching work happens."""
+    asm_acc_sources = defaultdict(list)
+    biosample_acc_sources = defaultdict(list)
+
+    for sample_id in fasta_paths:
+        asm_acc, biosample_acc = resolve_custom_identity(
+            sample_id, metadata_by_id.get(sample_id, {})
+        )
+        asm_acc_sources[asm_acc].append(sample_id)
+        biosample_acc_sources[biosample_acc].append(sample_id)
+
+    conflicts = []
+    for label, sources in (
+        ("asm_acc", asm_acc_sources),
+        ("biosample_acc", biosample_acc_sources),
+    ):
+        for value, sample_ids in sources.items():
+            if len(sample_ids) > 1:
+                conflicts.append(
+                    "%s %r is shared by samples: %s"
+                    % (label, value, ", ".join(sorted(sample_ids)))
+                )
+
+    if conflicts:
+        raise ValueError(
+            "Duplicate identity after applying --metadata overrides:\n  "
+            + "\n  ".join(sorted(conflicts))
+        )
+
+
+def sketch_custom_sequences(
+    fasta_paths, signature_dir, hash_number, kmer_size, signature_name_by_sample_id=None
+):
     # Local files are far more likely than NCBI's own downloads to be
     # malformed/empty/non-FASTA, so - unlike sketch_assemblies() - each
     # sample is sketched defensively and a failure only drops that one
@@ -1535,6 +1597,14 @@ def sketch_custom_sequences(fasta_paths, signature_dir, hash_number, kmer_size):
     for index, sample_id in enumerate(sorted(fasta_paths), start=1):
         fasta_path = fasta_paths[sample_id]
         signature_path = signature_dir / ("%s.sig" % sample_id)
+        # The signature's embedded name is its METADATA asm_acc (which a
+        # --metadata override may have changed from sample_id), not the
+        # raw sample_id/filename - see resolve_custom_identity.
+        signature_name = (
+            signature_name_by_sample_id.get(sample_id, sample_id)
+            if signature_name_by_sample_id
+            else sample_id
+        )
 
         try:
             minhash = MinHash(n=hash_number, ksize=kmer_size)
@@ -1548,7 +1618,7 @@ def sketch_custom_sequences(fasta_paths, signature_dir, hash_number, kmer_size):
 
             signature = SourmashSignature(
                 minhash,
-                name=sample_id,
+                name=signature_name,
                 filename=str(fasta_path),
             )
             with signature_path.open("wt", encoding="utf-8") as handle:
@@ -1613,12 +1683,7 @@ def insert_custom_metadata(conn, metadata_by_id, verified):
 
     for sample_id in sorted(verified):
         row = metadata_by_id.get(sample_id, {})
-
-        # No real biosample/assembly accession exists for local sequences
-        # unless the metadata file explicitly supplies one; fall back to
-        # the sample id itself for both.
-        biosample_acc = normalize_value(row.get("biosample_acc", "")) or sample_id
-        asm_acc = normalize_value(row.get("asm_acc", "")) or sample_id
+        asm_acc, biosample_acc = resolve_custom_identity(sample_id, row)
 
         values = {
             "biosample_acc": biosample_acc,
@@ -1632,9 +1697,12 @@ def insert_custom_metadata(conn, metadata_by_id, verified):
             value = normalize_value(row.get(column, ""))
             values[column] = value if value else "missing"
 
+        # Plain INSERT, not INSERT OR REPLACE: validate_custom_identity_uniqueness
+        # already rejects duplicate biosample_acc/asm_acc values up front, so a
+        # PRIMARY KEY collision here means that guarantee was somehow violated -
+        # better to fail loudly than silently replace another sample's row.
         conn.execute(
-            "INSERT OR REPLACE INTO METADATA (%s) VALUES (%s)"
-            % (column_list, placeholders),
+            "INSERT INTO METADATA (%s) VALUES (%s)" % (column_list, placeholders),
             [values[column] for column in columns],
         )
 
@@ -1652,15 +1720,24 @@ def build_custom(args):
         if not fasta_paths:
             raise RuntimeError("No FASTA files found in %s" % args.input_dir)
 
+        validate_custom_identity_uniqueness(fasta_paths, metadata_by_id)
+
         logging.info(
             "Found %d local sequences in %s", len(fasta_paths), args.input_dir
         )
 
+        signature_name_by_sample_id = {
+            sample_id: resolve_custom_identity(
+                sample_id, metadata_by_id.get(sample_id, {})
+            )[0]
+            for sample_id in fasta_paths
+        }
         signature_paths, errors = sketch_custom_sequences(
             fasta_paths,
             tmp_folder / "signatures",
             args.number,
             args.ksize,
+            signature_name_by_sample_id,
         )
         if not signature_paths:
             raise RuntimeError(

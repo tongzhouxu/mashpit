@@ -1334,6 +1334,96 @@ class TestSketchCustomSequences(unittest.TestCase):
             self.assertEqual(set(signature_paths), {"good_sample"})
             self.assertIn("empty_sample", errors)
 
+    def test_signature_name_honors_override_not_sample_id(self):
+        # Regression test: signatures used to always be named after the
+        # raw sample_id, even when --metadata overrode asm_acc to a
+        # different value - query.py's asm_acc-keyed metadata lookup then
+        # found no row for that signature's name. The embedded signature
+        # name must track the resolved identity, not the sample_id/filename.
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            fasta_path = tmp / "sample1.fasta"
+            fasta_path.write_text(">c1\n" + "ACGTACGTAC" * 10 + "\n")
+            signature_paths, _ = sketch_custom_sequences(
+                {"sample1": fasta_path},
+                tmp / "sigs",
+                100,
+                21,
+                signature_name_by_sample_id={"sample1": "GCA_000000001.1"},
+            )
+            # The on-disk file is still keyed/named by sample_id (matches
+            # the source filename), but the signature embedded inside it
+            # carries the resolved identity.
+            signature = list(
+                load_file_as_signatures(str(signature_paths["sample1"]))
+            )[0]
+            self.assertEqual(str(signature), "GCA_000000001.1")
+
+
+class TestResolveCustomIdentity(unittest.TestCase):
+    def test_defaults_to_sample_id_when_no_override(self):
+        self.assertEqual(
+            build_module.resolve_custom_identity("sample1", {}),
+            ("sample1", "sample1"),
+        )
+
+    def test_honors_asm_acc_and_biosample_acc_overrides_independently(self):
+        row = {"asm_acc": "GCA_000000001.1", "biosample_acc": "SAMN99999999"}
+        self.assertEqual(
+            build_module.resolve_custom_identity("sample1", row),
+            ("GCA_000000001.1", "SAMN99999999"),
+        )
+
+    def test_partial_override_falls_back_to_sample_id_for_the_rest(self):
+        row = {"asm_acc": "GCA_000000001.1"}
+        self.assertEqual(
+            build_module.resolve_custom_identity("sample1", row),
+            ("GCA_000000001.1", "sample1"),
+        )
+
+
+class TestValidateCustomIdentityUniqueness(unittest.TestCase):
+    def test_passes_with_no_metadata(self):
+        fasta_paths = {"sample1": Path("/fake/sample1.fasta"), "sample2": Path("/fake/sample2.fasta")}
+        build_module.validate_custom_identity_uniqueness(fasta_paths, {})  # must not raise
+
+    def test_passes_with_distinct_overrides(self):
+        fasta_paths = {"sample1": Path("/fake/1"), "sample2": Path("/fake/2")}
+        metadata_by_id = {
+            "sample1": {"asm_acc": "GCA_1"},
+            "sample2": {"asm_acc": "GCA_2"},
+        }
+        build_module.validate_custom_identity_uniqueness(fasta_paths, metadata_by_id)  # must not raise
+
+    def test_rejects_duplicate_asm_acc_override(self):
+        fasta_paths = {"sample1": Path("/fake/1"), "sample2": Path("/fake/2")}
+        metadata_by_id = {
+            "sample1": {"asm_acc": "GCA_shared"},
+            "sample2": {"asm_acc": "GCA_shared"},
+        }
+        with self.assertRaises(ValueError) as context:
+            build_module.validate_custom_identity_uniqueness(fasta_paths, metadata_by_id)
+        self.assertIn("asm_acc", str(context.exception))
+        self.assertIn("GCA_shared", str(context.exception))
+
+    def test_rejects_duplicate_biosample_acc_override(self):
+        fasta_paths = {"sample1": Path("/fake/1"), "sample2": Path("/fake/2")}
+        metadata_by_id = {
+            "sample1": {"biosample_acc": "SAMN_shared"},
+            "sample2": {"biosample_acc": "SAMN_shared"},
+        }
+        with self.assertRaises(ValueError) as context:
+            build_module.validate_custom_identity_uniqueness(fasta_paths, metadata_by_id)
+        self.assertIn("biosample_acc", str(context.exception))
+
+    def test_rejects_override_colliding_with_another_samples_default_identity(self):
+        # sample2 has no override (defaults to its own sample_id "sample2"),
+        # but sample1's override happens to collide with that default.
+        fasta_paths = {"sample1": Path("/fake/1"), "sample2": Path("/fake/2")}
+        metadata_by_id = {"sample1": {"asm_acc": "sample2"}}
+        with self.assertRaises(ValueError):
+            build_module.validate_custom_identity_uniqueness(fasta_paths, metadata_by_id)
+
 
 class TestInsertCustomMetadata(unittest.TestCase):
     def test_writes_missing_placeholders_when_no_metadata_supplied(self):
@@ -1404,6 +1494,25 @@ class TestInsertCustomMetadata(unittest.TestCase):
                 ("sample2", "missing", "missing"),
             ],
         )
+
+    def test_duplicate_biosample_acc_raises_instead_of_silently_replacing(self):
+        # Regression test: insert_custom_metadata used to use INSERT OR
+        # REPLACE, so two samples resolving to the same biosample_acc (the
+        # METADATA primary key) would silently drop the first sample's row
+        # while its signature stayed in the database. build_custom now
+        # rejects this earlier via validate_custom_identity_uniqueness, but
+        # insert_custom_metadata itself must also fail loudly, not silently
+        # replace, as a second line of defense.
+        conn = create_connection(":memory:")
+        create_database(conn)
+        verified = {"sample1": Path("/fake/1"), "sample2": Path("/fake/2")}
+        metadata_by_id = {
+            "sample1": {"biosample_acc": "SAMN_shared"},
+            "sample2": {"biosample_acc": "SAMN_shared"},
+        }
+        with self.assertRaises(sqlite3.IntegrityError):
+            insert_custom_metadata(conn, metadata_by_id, verified)
+        conn.close()
 
 
 class TestValidateCustomArgs(unittest.TestCase):
@@ -1536,11 +1645,124 @@ class TestBuildCustom(unittest.TestCase):
                     os.remove(name)
 
 
+class TestBuildCustomIdentityOverride(unittest.TestCase):
+    # End-to-end coverage for the identity-integrity issues found in
+    # review: (1) a signature used to keep its raw sample_id name even
+    # when --metadata overrode asm_acc, so query.py's asm_acc-keyed
+    # metadata lookup found no row for it and the hit silently vanished
+    # from query output; (2) two samples resolving to the same overridden
+    # identity used to have one silently dropped via INSERT OR REPLACE.
+    def setUp(self):
+        self.input_dir = Path(tempfile.mkdtemp(prefix="mashpit_identity_input_"))
+        (self.input_dir / "sample1.fasta").write_text(
+            ">c1\n" + "ACGTACGTAC" * 50 + "\n"
+        )
+        (self.input_dir / "sample2.fasta").write_text(
+            ">c1\n" + "TTGGCCAATT" * 50 + "\n"
+        )
+
+    def tearDown(self):
+        shutil.rmtree(self.input_dir, ignore_errors=True)
+        shutil.rmtree("test_identity_db", ignore_errors=True)
+        for name in (
+            "sample1_query_representative_matches.csv",
+            "sample1_query_tree.newick",
+            "sample1_query_tree.png",
+        ):
+            if os.path.isfile(name):
+                os.remove(name)
+        for file in os.listdir():
+            if file.endswith(".log"):
+                os.remove(file)
+
+    def test_query_finds_metadata_when_asm_acc_is_overridden(self):
+        metadata_path = self.input_dir.parent / "mashpit_identity_metadata.tsv"
+        metadata_path.write_text(
+            "sample_id\tasm_acc\tstrain\nsample1\tGCA_999999999.1\tStrainA\n"
+        )
+        try:
+            build_result = subprocess.run(
+                [
+                    "mashpit", "build", "custom", "test_identity_db",
+                    "--input-dir", str(self.input_dir),
+                    "--metadata", str(metadata_path),
+                ],
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(build_result.returncode, 0, build_result.stderr)
+
+            query_dir = Path(tempfile.mkdtemp(prefix="mashpit_identity_query_"))
+            try:
+                query_path = query_dir / "sample1_query.fasta"
+                query_path.write_text((self.input_dir / "sample1.fasta").read_text())
+                result = subprocess.run(
+                    ["mashpit", "query", str(query_path), "test_identity_db"],
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+
+                output_df = pd.read_csv("sample1_query_representative_matches.csv")
+                # Before the fix this row - and the metadata columns
+                # alongside it - would be missing entirely: the signature
+                # was still named "sample1", but its METADATA row's
+                # asm_acc had been overridden to GCA_999999999.1, so the
+                # asm_acc-keyed lookup in generate_query_table found
+                # nothing for it.
+                top_hit = output_df.sort_values(
+                    "similarity_score", ascending=False
+                ).iloc[0]
+                self.assertEqual(top_hit["asm_acc"], "GCA_999999999.1")
+                self.assertEqual(top_hit["strain"], "StrainA")
+                self.assertGreater(top_hit["similarity_score"], 0.9)
+            finally:
+                shutil.rmtree(query_dir, ignore_errors=True)
+        finally:
+            if metadata_path.exists():
+                metadata_path.unlink()
+
+    def test_duplicate_asm_acc_override_fails_the_build(self):
+        metadata_path = self.input_dir.parent / "mashpit_identity_dup_metadata.tsv"
+        metadata_path.write_text(
+            "sample_id\tasm_acc\nsample1\tGCA_shared.1\nsample2\tGCA_shared.1\n"
+        )
+        try:
+            build_result = subprocess.run(
+                [
+                    "mashpit", "build", "custom", "test_identity_db",
+                    "--input-dir", str(self.input_dir),
+                    "--metadata", str(metadata_path),
+                ],
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(build_result.returncode, 0)
+            self.assertIn("Duplicate identity", build_result.stderr)
+            # cleanup_on_failure must remove the half-built database, not
+            # leave a broken folder behind that blocks the next attempt.
+            self.assertFalse(Path("test_identity_db").exists())
+        finally:
+            if metadata_path.exists():
+                metadata_path.unlink()
+
+
 class TestComputeShardCount(unittest.TestCase):
     def test_small_database_gets_one_shard(self):
         self.assertEqual(compute_shard_count(0), 1)
         self.assertEqual(compute_shard_count(1), 1)
         self.assertEqual(compute_shard_count(99), 1)
+
+    def test_boundary_at_one_hundred_still_a_single_shard(self):
+        # Floor division means the count only reaches 2 once total
+        # signatures crosses 200, not 100 - see the "roughly 200
+        # representatives" wording in the README, not "100+".
+        self.assertEqual(compute_shard_count(100), 1)
+        self.assertEqual(compute_shard_count(199), 1)
+
+    def test_boundary_at_two_hundred_becomes_two_shards(self):
+        self.assertEqual(compute_shard_count(200), 2)
+        self.assertEqual(compute_shard_count(299), 2)
 
     def test_scales_roughly_one_shard_per_hundred_signatures(self):
         self.assertEqual(compute_shard_count(350), 3)
@@ -1691,6 +1913,28 @@ class TestReshardDatabase(unittest.TestCase):
         missing = self.db_folder.parent / "does_not_exist"
         with self.assertRaises(FileNotFoundError):
             reshard_database(missing, nshards=2)
+
+    def test_original_survives_an_interruption_installing_the_replacement(self):
+        # Regression test: reshard_database used to delete the original
+        # signature store before renaming the replacement into place -
+        # an interruption between those two steps left no valid .sig
+        # entry at all. It must now be recoverable: the original is
+        # renamed aside (not deleted) first, and restored if installing
+        # the replacement fails.
+        original_rename = Path.rename
+
+        def failing_rename(self_path, target):
+            if self_path.name.endswith(".reshard-tmp"):
+                raise OSError("simulated failure installing replacement")
+            return original_rename(self_path, target)
+
+        with patch.object(Path, "rename", failing_rename):
+            with self.assertRaises(OSError):
+                reshard_database(self.db_folder, nshards=3)
+
+        self.assertTrue(self.sig_path.is_file())
+        loaded_names = {str(sig) for sig in load_all_signatures(self.sig_path)}
+        self.assertEqual(loaded_names, {str(sig) for sig in self.signatures})
 
 
 class TestCompareShardedDatabase(unittest.TestCase):
