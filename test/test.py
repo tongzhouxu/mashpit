@@ -891,7 +891,10 @@ def hash_metadata_table(db_path):
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     cursor.execute("PRAGMA table_info(METADATA);")
-    columns = [row[1] for row in cursor.fetchall()]
+    # Historical checksums cover the original representative metadata fields.
+    # New report fields are validated independently by TestClusterReport.
+    columns = [row[1] for row in cursor.fetchall()
+               if row[1] not in {"epi_type", "computed_types"}]
     columns.sort()  # Ensure column order is deterministic
     sorted_columns = ", ".join(columns)
     cursor.execute(f"SELECT {sorted_columns} FROM METADATA ORDER BY {sorted_columns}")
@@ -1640,6 +1643,7 @@ class TestBuildCustom(unittest.TestCase):
                 "sampleA_query_representative_matches.csv",
                 "sampleA_query_tree.newick",
                 "sampleA_query_tree.png",
+                "sampleA_query_tree.svg",
             ):
                 if os.path.isfile(name):
                     os.remove(name)
@@ -1668,6 +1672,7 @@ class TestBuildCustomIdentityOverride(unittest.TestCase):
             "sample1_query_representative_matches.csv",
             "sample1_query_tree.newick",
             "sample1_query_tree.png",
+            "sample1_query_tree.svg",
         ):
             if os.path.isfile(name):
                 os.remove(name)
@@ -2456,7 +2461,7 @@ class TestReshardCli(unittest.TestCase):
                 os.remove(file)
 
     def tearDown(self):
-        for name in ("query_representative_matches.csv", "query_tree.newick", "query_tree.png"):
+        for name in ("query_representative_matches.csv", "query_tree.newick", "query_tree.png", "query_tree.svg"):
             if os.path.isfile(name):
                 os.remove(name)
 
@@ -2590,6 +2595,139 @@ class TestMashpitGui(unittest.TestCase):
         finally:
             os.kill(process.pid, signal.SIGTERM)
             process.wait()
+
+
+
+class TestClusterReport(unittest.TestCase):
+    def test_full_members_not_representatives_drive_summary(self):
+        from mashpit.report import store_cluster_members, read_cluster_members, summarize_clusters
+        conn = create_connection(":memory:")
+        create_database(conn)
+        members = pd.DataFrame({
+            "target_acc": ["PDT1", "PDT2", "PDT3", "PDT3"],
+            "PDS_acc": ["PDS_A"] * 4,
+            "asm_acc": ["GCA_1", None, "GCA_3", "GCA_3"],
+            "epi_type": ["clinical", "environmental/other", None, None],
+            "collection_date": ["2019", "2021-02", "not collected", "not collected"],
+            "computed_types": ["serotype=Enteritidis", "serotype=Typhimurium", None, None],
+        })
+        store_cluster_members(conn, members)
+        loaded = read_cluster_members(conn, ["PDS_A"])
+        self.assertEqual(len(loaded), 3)
+        summary = summarize_clusters(loaded).iloc[0]
+        self.assertEqual(summary["cluster_size"], 3)
+        self.assertEqual(summary["env_cli_ratio"], "1:1")
+        self.assertEqual(summary["unknown_source_count"], 1)
+        self.assertEqual(summary["sampling_year_start"], 2019)
+        self.assertEqual(summary["sampling_year_end"], 2021)
+        self.assertEqual(summary["dated_isolates"], 2)
+        self.assertEqual(summary["computed_serotype_known"], 2)
+        conn.close()
+
+    def test_legacy_database_does_not_invent_cluster_size(self):
+        from mashpit.report import read_cluster_members, summarize_clusters
+        conn = create_connection(":memory:")
+        create_database(conn)
+        self.assertTrue(read_cluster_members(conn, ["PDS_A"]).empty)
+        self.assertTrue(summarize_clusters(pd.DataFrame()).empty)
+        conn.close()
+
+    def test_dates_and_conflicting_serotypes(self):
+        from mashpit.report import collection_year, computed_serotype, source_group
+        self.assertEqual(collection_year("2020-02-29"), 2020)
+        for value in ("2020-02-31", "2018/2020", "missing", None):
+            self.assertIsNone(collection_year(value))
+        result = computed_serotype("serotype=Enteritidis; serovar=Typhimurium; MLST=11")
+        self.assertIn("Enteritidis", result)
+        self.assertIn("Typhimurium", result)
+        self.assertNotIn("MLST", result)
+        self.assertEqual(computed_serotype("serotype=4,[5],12:i:-; MLST=19"), "serotype: 4,[5],12:i:-")
+        self.assertEqual(computed_serotype("serotype=missing"), "Unknown")
+        self.assertEqual(source_group("missing"), "Unknown / other")
+        self.assertEqual(source_group("nonclinical"), "Unknown / other")
+
+    def test_members_without_metadata_or_assemblies_survive_load(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            metadata = Path(tmp) / "metadata.tsv"
+            clusters = Path(tmp) / "clusters.tsv"
+            metadata.write_text("target_acc\tasm_acc\nPDT000000001.1\tGCA_000000001.1\n")
+            clusters.write_text("target_acc\tPDS_acc\nPDT000000001.1\tPDS1\nPDT000000002.1\tPDS1\n")
+            full, eligible = load_metadata(metadata, clusters)
+            self.assertEqual(len(full), 2)
+            self.assertEqual(len(eligible), 1)
+
+    def test_tree_height_and_exports(self):
+        from mashpit.tree_plot import tree_layout, render_tree
+        from io import BytesIO
+        from PIL import Image
+        small = tree_layout(3)
+        large = tree_layout(100)
+        larger_font = tree_layout(100, font_size=18)
+        self.assertGreater(large["height"] * 100, small["height"] * 3)
+        self.assertGreater(larger_font["height"], large["height"])
+        png, svg, tips = render_tree("(query:0.1,(a:0.1,b:0.2):0.1);", "query")
+        self.assertEqual(tips, 3)
+        self.assertIn(b"<svg", svg)
+        width, height = Image.open(BytesIO(png)).size
+        self.assertGreater(width, height)
+        many = "(" + ",".join(f"tip_{i}:.1" for i in range(100)) + ");"
+        large_png, _, count = render_tree(many)
+        self.assertEqual(count, 100)
+        self.assertGreater(Image.open(BytesIO(large_png)).height, height * 5)
+
+    def test_insert_preserves_computed_types_and_all_members(self):
+        conn = create_connection(":memory:")
+        create_database(conn)
+        metadata = pd.DataFrame({
+            "target_acc": ["PDT1", "PDT2"], "PDS_acc": ["PDS1", "PDS1"],
+            "asm_acc": ["GCA_000000001.1", None], "biosample_acc": ["SAMN1", "SAMN2"],
+            "computed_types": ["serotype=4,[5],12:i:-", "serotype=Enteritidis"],
+            "epi_type": ["clinical", "environmental/other"],
+        })
+        reps = metadata.iloc[:1].copy()
+        insert_metadata(conn, metadata, reps, 20, {"GCA_000000001.1": Path("fake")}, {})
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM CLUSTER_MEMBERS").fetchone()[0], 2)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM REPRESENTATIVE").fetchone()[0], 1)
+        self.assertEqual(conn.execute("SELECT computed_types, epi_type FROM METADATA").fetchone(),
+                         ("serotype=4,[5],12:i:-", "clinical"))
+        summary = generate_cluster_table(conn, pd.DataFrame({"PDS_acc": ["PDS1"],
+                                        "similarity_score": [.99]}), 1000)
+        self.assertEqual(summary.iloc[0]["cluster_size"], 2)
+        self.assertEqual(summary.iloc[0]["total_representatives"], 1)
+        conn.close()
+
+    def test_streamlit_report_and_controls(self):
+        from streamlit.testing.v1 import AppTest
+        script = '''
+import pandas as pd
+import streamlit as st
+from mashpit.report import summarize_clusters
+from mashpit.streamlit_app import display_results
+st.set_page_config(layout="wide")
+members = pd.DataFrame({"target_acc": ["PDT1", "PDT2"], "PDS_acc": ["PDS1", "PDS1"],
+    "computed_types": ["serotype=Enteritidis", None], "collection_date": ["2020", "2021-02"],
+    "epi_type": ["clinical", "environmental/other"]})
+clusters = summarize_clusters(members)
+clusters["best_similarity_score"] = .99
+clusters["near_top"] = True
+representatives = pd.DataFrame({"asm_acc": ["a", "b"], "similarity_score": [.99, .98]})
+results = {"query_name": "query", "representative_df": representatives,
+    "cluster_df": clusters, "members": members, "cluster_csv": b"csv", "representative_csv": b"csv",
+    "tree_newick": b"(query:0.1,(a:0.1,b:0.2):0.1);", "log": ""}
+display_results(results, {"Type": "Taxonomy"})
+'''
+        app = AppTest.from_string(script).run(timeout=30)
+        self.assertEqual(len(app.exception), 0, str(app.exception))
+        self.assertEqual(app.metric[3].value, "2")
+        app.slider[0].set_value(14).run(timeout=30)
+        self.assertEqual(len(app.exception), 0, str(app.exception))
+        # A legacy database and a custom database must both remain usable.
+        legacy = script.replace('"members": members', '"members": pd.DataFrame()')
+        app = AppTest.from_string(legacy).run(timeout=30)
+        self.assertEqual(len(app.exception), 0, str(app.exception))
+        custom = script.replace('"cluster_df": clusters', '"cluster_df": None')
+        app = AppTest.from_string(custom).run(timeout=30)
+        self.assertEqual(len(app.exception), 0, str(app.exception))
 
 
 if __name__ == "__main__":

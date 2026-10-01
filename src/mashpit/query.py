@@ -15,7 +15,8 @@ import pandas as pd
 from functools import partial
 from skbio import DistanceMatrix
 from skbio.tree import nj
-from phytreeviz import TreeViz
+from mashpit.tree_plot import render_tree
+from mashpit.report import read_cluster_members, summarize_clusters
 from mashpit.build import (
     create_connection,
     fetch_signatures_by_name,
@@ -171,7 +172,8 @@ def generate_cluster_table(conn, representative_df, hash_number, tie_tolerance_h
         ascending=[False, False, True],
     ).reset_index(drop=True)
 
-    return cluster_df
+    members = read_cluster_members(conn, cluster_df["PDS_acc"])
+    return cluster_df.merge(summarize_clusters(members), on="PDS_acc", how="left")
 
 
 def generate_mashtree(
@@ -224,23 +226,27 @@ def generate_mashtree(
     with open(f"{query_name}_tree.newick", "w") as f:
         f.write(newick_str)
 
-    # add annotation
+    # Annotate labels without recomputing the topology. BioPython quotes
+    # punctuation safely; underscores preserve the existing export convention.
     if added_annotation is not None:
-        annotated_leaves = []
-        for leaf in leaves:
-            if leaf in acc_list:
-                annotation_value = str(
-                    output_df[output_df["asm_acc"] == leaf][added_annotation].iloc[0]
-                )
-                leaf = leaf + " " + annotation_value
-            annotated_leaves.append(leaf)
-        dm = DistanceMatrix(matrix, annotated_leaves)
-        newick_str = nj(dm, result_constructor=str)
+        from io import StringIO
+        from Bio import Phylo
+
+        tree = Phylo.read(StringIO(newick_str), "newick")
+        annotations = output_df.set_index("asm_acc")[added_annotation].to_dict()
+        for tip in tree.get_terminals():
+            if tip.name in annotations:
+                tip.name = tip.name + "_" + "_".join(str(annotations[tip.name]).split())
+        buffer = StringIO()
+        Phylo.write(tree, buffer, "newick", format_branch_length="%.10g")
+        newick_str = buffer.getvalue()
         with open(f"{query_name}_tree.newick", "w") as f:
             f.write(newick_str)
-    tv = TreeViz(f"{query_name}_tree.newick")
-    tv.set_node_label_props(query_name, color="red")
-    tv.savefig(f"{query_name}_tree.png", dpi=300)
+    png, svg, _ = render_tree(newick_str, query_name)
+    with open(f"{query_name}_tree.png", "wb") as output:
+        output.write(png)
+    with open(f"{query_name}_tree.svg", "wb") as output:
+        output.write(svg)
 
 
 def query(args):

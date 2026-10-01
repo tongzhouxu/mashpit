@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import base64
 import os
 import re
 import sqlite3
@@ -8,8 +9,13 @@ import sys
 import tempfile
 from pathlib import Path
 
+import altair as alt
 import pandas as pd
+
+from mashpit.report import prepare_members, read_cluster_members
+from mashpit.tree_plot import render_tree
 import streamlit as st
+import streamlit.components.v1 as components
 
 
 APP_NAME = "Mashpit Explorer"
@@ -112,6 +118,12 @@ def run_query(uploaded_assembly, database, number, threshold, annotation, tie_to
             cluster_df = pd.read_csv(cluster_path, index_col=0)
             cluster_csv = cluster_path.read_bytes()
 
+        members = pd.DataFrame()
+        if cluster_df is not None:
+            sql_path = next(database.glob("*.db"))
+            with sqlite3.connect(f"file:{sql_path}?mode=ro", uri=True) as conn:
+                members = read_cluster_members(conn, cluster_df["PDS_acc"])
+
         tree_png = read_optional_bytes(work_dir / f"{query_name}_tree.png")
         tree_skip_reason = None
         if tree_png is None:
@@ -129,6 +141,7 @@ def run_query(uploaded_assembly, database, number, threshold, annotation, tie_to
             "representative_df": representative_df,
             "representative_csv": representative_path.read_bytes(),
             "cluster_df": cluster_df,
+            "members": members,
             "cluster_csv": cluster_csv,
             "tree_png": tree_png,
             "tree_newick": read_optional_bytes(work_dir / f"{query_name}_tree.newick"),
@@ -138,78 +151,186 @@ def run_query(uploaded_assembly, database, number, threshold, annotation, tie_to
         }
 
 
+def metadata_chart(frame, column, title):
+    counts = frame[column].fillna("Unknown").value_counts().rename_axis("Value").reset_index(name="Isolates")
+    # Keep totals honest while limiting long legends / category lists.
+    if len(counts) > 10:
+        remaining = int(counts.iloc[10:]["Isolates"].sum())
+        counts = pd.concat([counts.head(10), pd.DataFrame([{"Value": "Other categories", "Isolates": remaining}])])
+    chart = alt.Chart(counts).mark_bar(color="#238b8d", cornerRadiusEnd=3).encode(
+        x=alt.X("Isolates:Q", title="Isolates", axis=alt.Axis(tickMinStep=1)),
+        y=alt.Y("Value:N", sort="-x", title=None, axis=alt.Axis(labelLimit=260)),
+        tooltip=["Value:N", "Isolates:Q"],
+    ).properties(title=title, height=max(260, len(counts) * 32 + 140))
+    st.altair_chart(chart, use_container_width=True)
+
+
+def display_cluster_context(cluster_df, members):
+    st.subheader("Cluster landscape")
+    st.caption(
+        "Ranked by best representative similarity. Cluster sizes describe all isolates "
+        "in the database release; metadata do not establish the source of the query isolate."
+    )
+    if "cluster_size" in cluster_df and cluster_df["cluster_size"].notna().any():
+        plot = cluster_df.head(20).copy()
+        counts = plot.melt(
+            id_vars=["PDS_acc", "best_similarity_score"],
+            value_vars=["environmental_count", "clinical_count", "unknown_source_count"],
+            var_name="Source", value_name="Isolates",
+        )
+        counts["Source"] = counts["Source"].map({
+            "environmental_count": "Environmental / other",
+            "clinical_count": "Clinical", "unknown_source_count": "Unknown / other",
+        })
+        st.altair_chart(alt.Chart(counts).mark_bar().encode(
+            y=alt.Y("PDS_acc:N", sort=plot["PDS_acc"].tolist(), title=None),
+            x=alt.X("Isolates:Q", title="Full cluster size (isolates)"),
+            color=alt.Color("Source:N", scale=alt.Scale(
+                domain=["Environmental / other", "Clinical", "Unknown / other"],
+                range=["#238b8d", "#e5a44e", "#b9c2cb"],
+            ), legend=alt.Legend(orient="bottom")),
+            tooltip=["PDS_acc:N", "Source:N", "Isolates:Q", alt.Tooltip("best_similarity_score:Q", format=".4f")],
+        ).properties(height=max(300, len(plot) * 36 + 150)), use_container_width=True)
+        if len(cluster_df) > 20:
+            st.caption("Chart shows the first 20 ranked clusters; all candidates are in the table and selector below.")
+    else:
+        st.info("Full cluster metadata are unavailable in this database. Rebuild the taxon database to retain all member isolates, source categories, and computed types. Representative counts are not cluster sizes.")
+
+    preferred = ["PDS_acc", "best_similarity_score", "near_top", "cluster_size", "env_cli_ratio",
+                 "sampling_year_start", "sampling_year_end", "dated_isolates", "computed_serotypes",
+                 "hits_in_results", "total_representatives", "SNP_tree_link"]
+    st.dataframe(cluster_df[[c for c in preferred if c in cluster_df]], hide_index=True,
+                 use_container_width=True, column_config={
+                     "PDS_acc": "SNP cluster", "cluster_size": "Isolates in cluster",
+                     "near_top": "Near top",
+                     "sampling_year_start": st.column_config.NumberColumn("First year", format="%d"),
+                     "sampling_year_end": st.column_config.NumberColumn("Last year", format="%d"),
+                     "computed_serotypes": "Computed serotypes (counts)",
+                     "hits_in_results": "Representative hits",
+                     "total_representatives": "Representatives in database",
+                     "env_cli_ratio": "Env : clinical", "dated_isolates": "Isolates with usable dates",
+                     "best_similarity_score": st.column_config.NumberColumn("Best similarity", format="%.4f"),
+                     "SNP_tree_link": st.column_config.LinkColumn("NCBI cluster", display_text="Open ↗"),
+                 })
+    if members.empty or cluster_df.empty:
+        return
+    st.subheader("Inside a cluster")
+    selected = st.selectbox("Explore candidate cluster", cluster_df["PDS_acc"].tolist())
+    frame = prepare_members(members[members["PDS_acc"].eq(selected)])
+    if frame.empty:
+        st.info("No full-member metadata are stored for this cluster.")
+        return
+    years = frame["Collection year"].dropna().astype(int)
+    metrics = st.columns(4)
+    metrics[0].metric("Isolates", f"{len(frame):,}")
+    env = int(frame["Source group"].eq("Environmental / other").sum())
+    clinical = int(frame["Source group"].eq("Clinical").sum())
+    metrics[1].metric("Env : clinical", f"{env} : {clinical}")
+    metrics[1].caption(f"{len(frame) - env - clinical:,} unknown / other")
+    metrics[2].metric("Sampling years", f"{years.min()}–{years.max()}" if len(years) else "Unknown")
+    metrics[2].caption(f"{len(years):,} / {len(frame):,} isolates with usable dates")
+    known = int(frame["Computed serotype"].ne("Unknown").sum())
+    metrics[3].metric("Computed serotype coverage", f"{known / len(frame):.0%}")
+    metrics[3].caption(f"{known:,} / {len(frame):,} isolates")
+    left, right = st.columns(2, gap="large")
+    with left:
+        metadata_chart(frame, "Computed serotype", "Computed serotype · all predictions retained")
+        metadata_chart(frame, "Reported serovar", "Reported serovar · submitted metadata")
+    with right:
+        if len(years):
+            annual = years.value_counts().rename_axis("Year").reset_index(name="Isolates")
+            st.altair_chart(alt.Chart(annual).mark_bar(color="#e5a44e").encode(
+                x=alt.X("Year:O", title="Collection year"), y="Isolates:Q",
+                tooltip=["Year:O", "Isolates:Q"],
+            ).properties(title="Sampling through time", height=280), use_container_width=True)
+        else:
+            st.info("No usable collection years are available.")
+        metadata_chart(frame, "Country / region", "Geographic context")
+    st.caption("Sampling years use valid ISO year, month, or date values. Date ranges and free text remain in the isolate table. Computed serotype and reported serovar are shown separately; conflicting predictions are retained.")
+    with st.expander("Isolation sources and hosts"):
+        left, right = st.columns(2)
+        with left:
+            metadata_chart(frame, "isolation_source", "Isolation source")
+        with right:
+            metadata_chart(frame, "host", "Host")
+    with st.expander("All isolates in this cluster", expanded=False):
+        fields = ["target_acc", "biosample_acc", "asm_acc", "strain", "Computed serotype",
+                  "computed_types", "serovar", "epi_type", "collection_date", "geo_loc_name",
+                  "isolation_source", "host"]
+        st.dataframe(frame[fields], hide_index=True, use_container_width=True)
+        st.download_button("Download cluster isolates", frame[fields].to_csv(index=False).encode(),
+                           file_name=f"{selected}_isolates.csv", mime="text/csv")
+
+
+@st.cache_data(show_spinner=False, max_entries=8)
+def render_report_tree(newick, query_name, font_size, spacing):
+    return render_tree(newick, query_name, font_size, spacing)
+
+
 def display_results(results, db_summary):
     representative_df = results["representative_df"]
     cluster_df = results["cluster_df"]
-
+    st.divider()
+    st.subheader(f"Results · {results['query_name']}")
+    st.caption(f"{db_summary.get('Type', 'Unknown')} database · local genome screening")
     columns = st.columns(3)
-    columns[0].metric("Candidate hits", len(representative_df))
-    top_score = (
-        representative_df["similarity_score"].max()
-        if "similarity_score" in representative_df
-        else None
-    )
-    columns[1].metric(
-        "Top similarity", f"{top_score:.3f}" if top_score is not None else "n/a"
-    )
-    columns[2].metric("Database type", db_summary.get("Type", "n/a"))
-
-    if cluster_df is not None:
-        # Cluster candidates are the headline view: multiple representatives
-        # of the same SNP cluster collapse into one row (hits_in_results /
-        # total_representatives), ranked by best_similarity_score - never by
-        # hit count alone. near_top flags clusters whose best hit is within
-        # the sketch's own resolution of the single best score, since at
-        # typical sketch sizes a gap like 0.999 vs 0.998 is one hash of
-        # difference and not a meaningful distinction.
-        near_top_count = int(cluster_df["near_top"].sum())
-        st.subheader("Candidate clusters")
-        st.caption(
-            f"{near_top_count} cluster(s) are statistically tied with the top hit "
-            "at this database's sketch resolution (see the near_top column)."
-        )
-        st.dataframe(cluster_df, use_container_width=True, hide_index=True)
-        st.download_button(
-            "Download cluster candidates",
-            results["cluster_csv"],
-            file_name=f"{results['query_name']}_cluster_candidates.csv",
-            mime="text/csv",
-        )
-
-        with st.expander("Representative-level evidence"):
-            st.dataframe(representative_df, use_container_width=True, hide_index=True)
-            st.download_button(
-                "Download representative matches",
-                results["representative_csv"],
-                file_name=f"{results['query_name']}_representative_matches.csv",
-                mime="text/csv",
+    columns[0].metric("Representative hits", len(representative_df))
+    top_score = representative_df["similarity_score"].max() if "similarity_score" in representative_df else None
+    columns[1].metric("Top similarity", f"{top_score:.4f}" if pd.notna(top_score) else "n/a")
+    columns[2].metric("Candidate clusters", len(cluster_df) if cluster_df is not None else "n/a")
+    overview, tree_tab, evidence = st.tabs(["Cluster context", "Sketch-distance tree", "Isolate evidence & downloads"])
+    with overview:
+        if cluster_df is not None:
+            near_top_count = int(cluster_df["near_top"].sum())
+            st.caption(f"{near_top_count} cluster(s) within the configured sketch-hash tolerance of the top hit. This is a screening heuristic, not a statistical confidence interval or outbreak confirmation.")
+            display_cluster_context(cluster_df, results.get("members", pd.DataFrame()))
+        else:
+            st.caption("This database has no SNP cluster membership. Metadata below describe the returned isolates.")
+            frame = prepare_members(representative_df)
+            left, right = st.columns(2)
+            with left:
+                metadata_chart(frame, "Computed serotype", "Computed serotype")
+                metadata_chart(frame, "isolation_source", "Isolation source")
+            with right:
+                metadata_chart(frame, "Country / region", "Geographic context")
+                metadata_chart(frame, "Reported serovar", "Reported serovar")
+    with tree_tab:
+        st.caption("Neighbor-joining tree of sketch distances among the query and qualifying representatives. Branch distances are not SNP counts. The query is highlighted in red.")
+        if results.get("tree_newick") is not None:
+            controls = st.columns(2)
+            font = controls[0].slider("Tip font size (pt)", 7, 18, 10)
+            spacing = controls[1].slider("Tip spacing", 0.8, 2.0, 1.0, 0.1)
+            with st.spinner("Rendering tree…"):
+                png, svg, tips = render_report_tree(results["tree_newick"].decode(), results["query_name"], font, spacing)
+            st.caption(f"{tips:,} tips · height follows tip count and font size. Large trees scroll vertically; SVG preserves detail at any zoom.")
+            encoded = base64.b64encode(svg).decode("ascii")
+            svg_height = re.search(r'<svg[^>]*height="([\d.]+)pt"', svg.decode())
+            preview_height = min(650, max(220, int(float(svg_height.group(1)) * 4 / 3) + 32)) if svg_height else 650
+            components.html(
+                '<div style="background:white;padding:12px;width:max-content">'
+                '<img alt="Candidate sketch-distance tree" style="max-width:none" '
+                f'src="data:image/svg+xml;base64,{encoded}"></div>',
+                height=preview_height, scrolling=True,
             )
-    else:
-        # Accession databases have no SNP clusters to group by.
-        st.subheader("Query results")
+            downloads = st.columns(3)
+            downloads[0].download_button("Download PNG", png, file_name=f"{results['query_name']}_tree.png", mime="image/png")
+            downloads[1].download_button("Download SVG", svg, file_name=f"{results['query_name']}_tree.svg", mime="image/svg+xml")
+            downloads[2].download_button("Download Newick", results["tree_newick"], file_name=f"{results['query_name']}_tree.newick", mime="text/plain")
+        elif results.get("tree_png") is not None:
+            st.image(results["tree_png"], use_container_width=False)
+        else:
+            st.info(results.get("tree_skip_reason") or "No tree was generated.")
+    with evidence:
+        st.subheader("Representative-level matches")
+        st.caption("Similarity scores belong to these representatives. Other members of their clusters were not individually compared with the query.")
         st.dataframe(representative_df, use_container_width=True, hide_index=True)
-        st.download_button(
-            "Download results",
-            results["representative_csv"],
-            file_name=f"{results['query_name']}_representative_matches.csv",
-            mime="text/csv",
-        )
-
-    if results["tree_png"] is not None:
-        st.subheader("Candidate sketch-distance tree")
-        st.image(results["tree_png"], use_container_width=True)
-        if results["tree_newick"] is not None:
-            st.download_button(
-                "Download Newick tree",
-                results["tree_newick"],
-                file_name=f"{results['query_name']}_tree.newick",
-                mime="text/plain",
-            )
-    else:
-        st.info(results["tree_skip_reason"])
-
-    with st.expander("Query log"):
-        st.code(results["log"] or "No console output was produced.")
+        st.download_button("Download representative matches", results["representative_csv"],
+                           file_name=f"{results['query_name']}_representative_matches.csv", mime="text/csv")
+        if cluster_df is not None:
+            st.download_button("Download cluster summary", results["cluster_csv"],
+                               file_name=f"{results['query_name']}_cluster_candidates.csv", mime="text/csv")
+        with st.expander("Query log"):
+            st.code(results["log"] or "No console output was produced.")
 
 
 def main():

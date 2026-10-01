@@ -285,7 +285,7 @@ A query produces:
 
 3. **Local tree**
 
-   Newick and image files (`<query>_tree.newick`, `<query>_tree.png`) showing the query genome together with its closest database representatives above the similarity threshold. The tree is skipped (with a log message) when the top hit falls below `--threshold` or fewer than two candidates qualify.
+   Newick and image files (`<query>_tree.newick`, `<query>_tree.png`, `<query>_tree.svg`) showing the query genome together with its closest database representatives above the similarity threshold. The tree is skipped (with a log message) when the top hit falls below `--threshold` or fewer than two candidates qualify.
 
 4. **Log file**
 
@@ -316,6 +316,18 @@ mashpit gui --port 8888
 The interface lets users select a local database, upload a query assembly, run the search, and inspect the result table and tree - all without the genome or results leaving the local machine.
 
 A pre-built Mashpit database is required.
+
+The report has three views:
+
+- **Cluster context:** ranked full cluster sizes with environmental/clinical/unknown composition; select a cluster to explore computed serotypes, reported serovars, sampling years, geography, isolation sources, hosts, and all member isolates.
+- **Sketch-distance tree:** height adapts to tip count, font size, and wrapped labels. Font and spacing controls redraw the figure without rerunning the query. The scrollable SVG view keeps labels readable; download PNG, SVG, or Newick.
+- **Isolate evidence & downloads:** representative-level similarity scores, complete metadata, and the enriched cluster-summary CSV.
+
+New taxon builds retain `CLUSTER_MEMBERS` from the complete release membership, including members without assemblies or downloaded genomes. Cluster size counts unique Pathogen Detection target accessions, not representatives. `epi_type` supplies environmental/clinical categories; unknown values remain explicit. Date summaries use valid ISO years, months, or dates and report their coverage. Raw dates, including ranges, remain in the isolate download. Computed serotype predictions are kept separate from submitted `serovar` values, and the original `computed_types` field is retained.
+
+**Existing databases:** older taxon databases contain only representative metadata. They continue to work, but full cluster sizes and source ratios are unavailable until the taxon database is rebuilt with this version. The report never substitutes representative counts for full cluster size. Accession/custom databases show metadata for returned isolates without implying SNP cluster membership.
+
+The near-top flag uses the configured sketch-hash tolerance; it is a screening heuristic, not a statistical confidence interval. Cluster-member metadata are context: similarity was measured only for the returned representatives.
 
 ## Intended use
 

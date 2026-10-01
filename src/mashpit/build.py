@@ -426,7 +426,7 @@ def load_metadata(metadata_path, isolate_path):
     metadata = metadata.merge(
         isolates[["target_acc", "PDS_acc"]].drop_duplicates("target_acc"),
         on="target_acc",
-        how="left",
+        how="outer",
     )
 
     metadata["target_key"] = metadata["target_acc"].map(target_key)
@@ -963,6 +963,11 @@ def reshard_database(database, nshards=None):
 
 
 def insert_metadata(conn, metadata, representatives, radius, verified, attempts):
+    from mashpit.report import store_cluster_members
+
+    store_cluster_members(conn, metadata)
+    for column in ("epi_type", "computed_types"):
+        add_custom_column(conn, column)
     metadata_by_asm = {
         normalize_value(row["asm_acc"]): row
         for _, row in metadata.iterrows()
@@ -1012,6 +1017,12 @@ def insert_metadata(conn, metadata, representatives, radius, verified, attempts)
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             values,
+        )
+
+        conn.execute(
+            "UPDATE METADATA SET epi_type = ?, computed_types = ? WHERE asm_acc = ?",
+            (normalize_value(row.get("epi_type", "")),
+             normalize_value(row.get("computed_types", "")), accession),
         )
 
         conn.execute(
