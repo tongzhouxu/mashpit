@@ -17,14 +17,6 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           cache: 'pip'
-      # printing the current Python version
-      - name: Download and set up ncbi datasets client
-        run: |
-          curl -o datasets 'https://ftp.ncbi.nlm.nih.gov/pub/datasets/command-line/v2/linux-amd64/datasets'
-          chmod +x datasets
-          mkdir -p $HOME/.local/bin
-          mv datasets $HOME/.local/bin
-          echo "$HOME/.local/bin" >> $GITHUB_PATH
       - name: Display Python version
         run: python -c "import sys; print(sys.version)"
       - name: Install HDF5
@@ -36,9 +28,6 @@ jobs:
       - name: Install pytest
         run: |
           pip install pytest
-      # Tests that hit live NCBI services are skipped here (MASHPIT_RUN_NETWORK_TESTS
-      # is unset) so this job stays fast and hermetic on every push/PR; they run
-      # instead from the scheduled/manual network-tests.yml workflow.
       - name: Run tests
         working-directory: test
         run: |

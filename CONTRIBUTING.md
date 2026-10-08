@@ -126,10 +126,24 @@ Enhancement suggestions are tracked as [GitHub issues](https://github.com/tongzh
 <!-- You might want to create an issue template for enhancement suggestions that can be used as a guide and that defines the structure of the information to be included. If you do so, reference it here in the description. -->
 
 ### Your First Code Contribution
-<!-- TODO
-include Setup of env, IDE and typical getting started instructions?
 
--->
+Run the core offline suite from the repository root after installing Mashpit and pytest:
+
+```bash
+python -m pytest test/test.py -q
+```
+
+Keep tests focused on behavior that matters to users: representative selection,
+metadata integrity, similarity ranking, tree/report output, and the local
+build/query/annotate/reshard workflow. Reuse or extend an existing scenario when
+possible. Avoid separate tests for simple wrappers, every default argument,
+third-party library behavior, or duplicate happy paths at multiple layers.
+
+Tests use synthetic data and small checked-in metadata/tree fixtures. Do not add
+live NCBI API checks, genome downloads, external-service availability tests, or
+scheduled network test jobs. The suite requires neither the NCBI datasets client
+nor a running web server. Network boundaries in taxon-build tests are mocked;
+temporary workspaces contain generated databases, trees, and logs.
 
 ### Improving The Documentation
 <!-- TODO

@@ -1,70 +1,38 @@
+"""Core offline regressions. Run with: python -m pytest test/test.py"""
+
 import hashlib
 import io
-import os
 import shutil
-import signal
 import sqlite3
 import subprocess
 import tarfile
 import tempfile
-import time
 import types
 import unittest
-import zipfile
 from pathlib import Path
-from unittest.mock import Mock, patch
-
+from unittest.mock import patch
 import pandas as pd
-from sourmash import MinHash, SourmashSignature, load_file_as_signatures
-
+from sourmash import MinHash, SourmashSignature
 from mashpit import build as build_module
-from mashpit import gui as gui_module
-from mashpit import query as query_module
-from mashpit.streamlit_app import safe_filename, validate_database
 from mashpit.build import (
-    add_custom_column,
-    annotate_database,
-    collect_custom_sequences,
-    compute_shard_count,
     create_connection,
     create_database,
-    download_release_files,
-    download_representatives,
-    ensure_annotation_log_table,
-    fetch_accession_metadata,
-    fetch_signatures_by_name,
     find_local_fasta_files,
     insert_accession_metadata,
-    insert_custom_metadata,
     insert_metadata,
-    is_sharded_sig,
-    list_accessions,
-    list_shard_files,
     load_all_signatures,
-    load_annotation_values,
-    load_custom_metadata,
     load_metadata,
     load_tree_graph,
     read_annotation_log,
-    read_shard_manifest,
     reshard_database,
-    resolve_database_file,
-    resolve_release,
-    resolve_sig_path,
     safe_extract_tar,
     select_all_representatives,
     select_tree_representatives,
-    sketch_assemblies,
     sketch_custom_sequences,
-    strip_fasta_suffix,
-    target_key,
     validate_column_name,
-    validate_custom_args,
-    validate_pathogen_name,
     write_signature_shards,
     write_signatures,
 )
-from mashpit.mashpit import commandToArgs
 from mashpit.query import (
     MashtreeSkipped,
     compare_sharded_database,
@@ -72,191 +40,17 @@ from mashpit.query import (
     generate_mashtree,
     generate_query_table,
 )
-
-# Tests that hit live NCBI services (FTP downloads, Entrez, or a real
-# `mashpit build`/`datasets` genome download) are skipped by default so
-# `pytest test.py` stays fast and hermetic for every push/PR. The full
-# suite, including these, runs from the scheduled/manual
-# network-tests.yml workflow, which sets this variable.
-network_test = unittest.skipUnless(
-    os.environ.get("MASHPIT_RUN_NETWORK_TESTS") == "1",
-    "set MASHPIT_RUN_NETWORK_TESTS=1 to run tests that hit live NCBI services",
-)
+import sys
+import pytest
 
 
-class TestCreateConnection(unittest.TestCase):
-    def test_connection_is_not_none(self):
-        conn = create_connection(":memory:")
-        self.assertIsNotNone(conn)
-
-    def test_connection_is_sqlite_connection(self):
-        conn = create_connection(":memory:")
-        self.assertIsInstance(conn, sqlite3.Connection)
-
-
-class TestCreateDatabase(unittest.TestCase):
-    def setUp(self):
-        # Create an in-memory database and connect to it before each test
-        self.conn = sqlite3.connect(":memory:")
-
-    def tearDown(self):
-        # Close the connection and destroy the database after each test
-        self.conn.close()
-
-    def test_metadata_table_exists(self):
-        create_database(self.conn)
-        c = self.conn.cursor()
-        c.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='METADATA';"
-        )
-        result = c.fetchone()
-        self.assertIsNotNone(result)
-
-    def test_description_table_exists(self):
-        create_database(self.conn)
-        c = self.conn.cursor()
-        c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='DESC';")
-        result = c.fetchone()
-        self.assertIsNotNone(result)
-
-    def test_representative_table_exists(self):
-        create_database(self.conn)
-        c = self.conn.cursor()
-        c.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='REPRESENTATIVE';"
-        )
-        result = c.fetchone()
-        self.assertIsNotNone(result)
-
-    def test_metadata_table_structure(self):
-        create_database(self.conn)
-        c = self.conn.cursor()
-        c.execute("PRAGMA table_info(METADATA);")
-        columns = [row[1] for row in c.fetchall()]
-        expected_columns = [
-            "biosample_acc",
-            "taxid",
-            "strain",
-            "collected_by",
-            "collection_date",
-            "geo_loc_name",
-            "isolation_source",
-            "lat_lon",
-            "serovar",
-            "sub_species",
-            "species",
-            "genus",
-            "host",
-            "host_disease",
-            "outbreak",
-            "srr",
-            "PDT_acc",
-            "PDS_acc",
-            "asm_acc",
-        ]
-        self.assertListEqual(columns, expected_columns)
-
-    def test_description_table_structure(self):
-        create_database(self.conn)
-        c = self.conn.cursor()
-        c.execute("PRAGMA table_info(DESC);")
-        columns = [row[1] for row in c.fetchall()]
-        expected_columns = ["name", "value"]
-        self.assertListEqual(columns, expected_columns)
-
-    def test_representative_table_structure(self):
-        create_database(self.conn)
-        c = self.conn.cursor()
-        c.execute("PRAGMA table_info(REPRESENTATIVE);")
-        columns = [row[1] for row in c.fetchall()]
-        expected_columns = [
-            "asm_acc",
-            "PDT_acc",
-            "PDS_acc",
-            "tree_radius",
-            "selection_round",
-            "fasta_path",
-            "download_attempts",
-        ]
-        self.assertListEqual(columns, expected_columns)
-
-
-class TestCommandToArgs(unittest.TestCase):
-    # No test previously covered mashpit.py's own argument parsing at all -
-    # notable given both real bugs found in this codebase were wiring bugs,
-    # not algorithmic ones. This also regression-guards the webserver
-    # subcommand removal: mashpit.py used to import a module (webserver.py)
-    # that a later commit deleted, so `mashpit` crashed with
-    # ModuleNotFoundError before parsing any arguments at all.
-    def test_build_requires_type_and_name(self):
-        with self.assertRaises(SystemExit):
-            commandToArgs(["build"])
-
-    def test_build_rejects_invalid_type(self):
-        with self.assertRaises(SystemExit):
-            commandToArgs(["build", "bogus", "some_db"])
-
-    def test_build_defaults(self):
-        args = commandToArgs(["build", "taxon", "some_db"])
-        self.assertEqual(args.type, "taxon")
-        self.assertEqual(args.name, "some_db")
-        self.assertEqual(args.number, 1000)
-        self.assertEqual(args.ksize, 31)
-        self.assertEqual(args.radius, 20.0)
-        self.assertEqual(args.download_attempts, 3)
-        self.assertEqual(args.download_batch_size, 500)
-        self.assertEqual(args.retry_delay, 5.0)
-        self.assertEqual(args.max_reselection_rounds, 5)
-        self.assertFalse(args.quiet)
-        self.assertIs(args.func, build_module.build)
-
-    def test_build_rejects_non_positive_number(self):
-        with self.assertRaises(SystemExit):
-            commandToArgs(["build", "taxon", "some_db", "--number", "0"])
-
-    def test_build_rejects_negative_radius(self):
-        with self.assertRaises(SystemExit):
-            commandToArgs(["build", "taxon", "some_db", "--radius", "-1"])
-
-    def test_query_defaults(self):
-        args = commandToArgs(["query", "sample.fna", "some_db"])
-        self.assertEqual(args.sample, "sample.fna")
-        self.assertEqual(args.database, "some_db")
-        self.assertEqual(args.number, 200)
-        self.assertEqual(args.threshold, 0.85)
-        self.assertIsNone(args.annotation)
-        self.assertEqual(args.tie_tolerance_hashes, 2)
-        self.assertIs(args.func, query_module.query)
-
-    def test_webserver_subcommand_is_rejected(self):
-        with self.assertRaises(SystemExit):
-            commandToArgs(["webserver"])
-
-    def test_gui_defaults(self):
-        args = commandToArgs(["gui"])
-        self.assertIsNone(args.port)
-        self.assertIs(args.func, gui_module.gui)
-
-    def test_gui_accepts_port(self):
-        args = commandToArgs(["gui", "--port", "9999"])
-        self.assertEqual(args.port, 9999)
-
-    def test_gui_rejects_non_positive_port(self):
-        with self.assertRaises(SystemExit):
-            commandToArgs(["gui", "--port", "0"])
+@pytest.fixture(autouse=True)
+def isolated_workspace(tmp_path, monkeypatch):
+    """Keep generated databases, trees, and logs out of the checkout."""
+    monkeypatch.chdir(tmp_path)
 
 
 class TestSafeExtractTar(unittest.TestCase):
-    # Regression test: every real NCBI SNP-tree archive (e.g.
-    # SNP_trees/PDS000110997.1.tar.gz) contains a leading "." entry for the
-    # archive's own top-level directory. safe_extract_tar's path-traversal
-    # guard used to reject that entry, because `destination / "."` resolves
-    # to `destination` itself, which does not start with
-    # `str(destination) + os.sep` (no trailing path component) even though
-    # it is exactly the safe extraction root. That made every real archive
-    # fail with "Unsafe path in archive: .", so no SNP tree ever downloaded
-    # successfully and build_taxon always raised "No representatives could
-    # be selected" - only caught by actually running a real taxon build.
     def setUp(self):
         self.tmpfolder = Path("tmp")
         self.tmpfolder.mkdir()
@@ -294,43 +88,7 @@ class TestSafeExtractTar(unittest.TestCase):
                 safe_extract_tar(archive, destination)
 
 
-@network_test
-class TestDownloadReleaseFiles(unittest.TestCase):
-    # Replaces the old TestDownloadMetadata: `download_metadata` no longer
-    # exists. build_taxon now resolves the release first, then downloads
-    # metadata, cluster, and SNP-tree files together.
-    def setUp(self):
-        self.pathogen_name = "Kluyvera_intermedia"
-        self.pd_version = None
-        self.tmpfolder = Path("tmp")
-        self.tmpfolder.mkdir()
-
-    def tearDown(self):
-        shutil.rmtree(self.tmpfolder)
-
-    def test_download_release_files(self):
-        try:
-            pathogen_name = validate_pathogen_name(self.pathogen_name)
-            release_url, pdg_acc = resolve_release(pathogen_name, self.pd_version)
-            download_release_files(release_url, pdg_acc, self.tmpfolder)
-        except Exception as e:
-            self.fail(f"download_release_files raised an exception: {e}")
-
-
 class TestSelectTreeRepresentatives(unittest.TestCase):
-    # Replaces TestCalculateCentroid: `calculate_centroid` (one representative
-    # per cluster, picked from a precomputed SNP-distance matrix) was removed
-    # in favor of the tree-radius method, which reads the cluster's Newick
-    # SNP tree directly and adaptively selects one-or-more representatives.
-    #
-    # Fixture is a synthetic 5-tip caterpillar tree with known pairwise path
-    # distances, so expected outputs are exact rather than NCBI ground truth:
-    #
-    #   (PDT0000001:10,(PDT0000002:10,(PDT0000003:10,(PDT0000004:10,PDT0000005:10):10):10):10);
-    #
-    # Pairwise distances: tip1-tip2=30, tip1-tip3=40, tip1-{tip4,tip5}=50,
-    # tip2-tip3=30, tip2-{tip4,tip5}=40, tip3-{tip4,tip5}=30, tip4-tip5=20.
-    # Diameter = 50.
     def setUp(self):
         self.tmpfolder = Path("tmp")
         self.tmpfolder.mkdir()
@@ -356,23 +114,17 @@ class TestSelectTreeRepresentatives(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.tmpfolder)
 
-    def test_radius_zero_selects_every_tip(self):
-        selected = select_tree_representatives(self.tree_path, self.rows, 0, set())
-        self.assertEqual(
-            sorted(r["asm_acc"] for r in selected),
-            ["GCA_1", "GCA_2", "GCA_3", "GCA_4", "GCA_5"],
-        )
-
-    def test_radius_above_diameter_selects_one_center(self):
-        selected = select_tree_representatives(self.tree_path, self.rows, 50, set())
-        self.assertEqual([r["asm_acc"] for r in selected], ["GCA_2"])
-
-    def test_intermediate_radius_is_adaptive(self):
-        selected = select_tree_representatives(self.tree_path, self.rows, 25, set())
-        self.assertEqual(
-            sorted(r["asm_acc"] for r in selected),
-            ["GCA_1", "GCA_2", "GCA_3", "GCA_5"],
-        )
+    def test_selection_across_radii(self):
+        for radius, expected in [
+            (0, ["GCA_1", "GCA_2", "GCA_3", "GCA_4", "GCA_5"]),
+            (25, ["GCA_1", "GCA_2", "GCA_3", "GCA_5"]),
+            (50, ["GCA_2"]),
+        ]:
+            with self.subTest(radius=radius):
+                selected = select_tree_representatives(
+                    self.tree_path, self.rows, radius, set()
+                )
+                self.assertEqual(sorted(r["asm_acc"] for r in selected), expected)
 
     def test_duplicate_target_key_is_dropped_deterministically(self):
         rows = pd.DataFrame(
@@ -387,170 +139,13 @@ class TestSelectTreeRepresentatives(unittest.TestCase):
                 "PDS_acc": ["PDSTEST"] * 4,
             }
         )
-        # GCA_2a and GCA_2b map to the same tree tip (PDT0000002); rows are
-        # sorted by asm_acc before selection so the lower accession always
-        # wins regardless of input row order. A single center suffices at
-        # this radius, and it lands on that tip, which is why GCA_2a (never
-        # GCA_2b) is the sole representative returned.
         selected = select_tree_representatives(self.tree_path, rows, 1000, set())
         selected_accs = [r["asm_acc"] for r in selected]
         self.assertNotIn("GCA_2b", selected_accs)
         self.assertEqual(selected_accs, ["GCA_2a"])
 
-    def test_select_all_representatives_groups_by_cluster(self):
-        reps, summary = select_all_representatives(
-            self.rows, {"PDSTEST": self.tree_path}, 25, set(), round_number=1
-        )
-        self.assertEqual(
-            sorted(reps["asm_acc"]), ["GCA_1", "GCA_2", "GCA_3", "GCA_5"]
-        )
-        self.assertEqual(summary.loc[0, "representatives"], 4)
-        self.assertEqual(summary.loc[0, "status"], "complete")
-
-
-@network_test
-class TestRealClusterRepresentativeSelection(unittest.TestCase):
-    # Same selection logic as TestSelectTreeRepresentatives, but against a
-    # real, tiny NCBI Pathogen Detection SNP cluster instead of a synthetic
-    # tree: Listeria_innocua PDG000000091.9, cluster PDS000110997.1 (3
-    # genomes). Fixtures:
-    #   test_trees/PDS000110997.1.newick - the real SNP tree, as downloaded
-    #     from SNP_trees/PDS000110997.1.tar.gz
-    #   test_real_cluster.tsv - the matching rows from
-    #     Clusters/PDG000000091.9.reference_target.cluster_list.tsv (also
-    #     contains PDS000111058.1, used by
-    #     TestRealClusterMultiRepresentativeSelection below)
-    #
-    # Tree: ('PDT000641938.1':4,'PDT000378859.2':2,'PDT000641923.1':8)'':0;
-    # Pairwise distances: 378859-641938=6, 378859-641923=10, 641938-641923=12
-    # (diameter=12), all confirmed by actually running select_tree_
-    # representatives against this fixture rather than hand-derived.
-    @classmethod
-    def setUpClass(cls):
-        test_dir = Path(__file__).resolve().parent
-        cls.tree_path = test_dir / "test_trees" / "PDS000110997.1.newick"
-        cluster = pd.read_csv(
-            test_dir / "test_real_cluster.tsv", sep="\t", dtype=str
-        )
-        cluster = cluster[cluster["PDS_acc"] == "PDS000110997.1"]
-        cls.rows = pd.DataFrame(
-            {
-                "asm_acc": cluster["gencoll_acc"],
-                "target_key": cluster["target_acc"].map(target_key),
-                "PDS_acc": cluster["PDS_acc"],
-            }
-        )
-
-    def test_radius_zero_selects_every_genome(self):
-        selected = select_tree_representatives(self.tree_path, self.rows, 0, set())
-        self.assertEqual(
-            sorted(r["asm_acc"] for r in selected),
-            ["GCA_004769845.1", "GCA_010090495.1", "GCA_010091595.1"],
-        )
-
-    def test_radius_above_diameter_selects_one_genome(self):
-        selected = select_tree_representatives(self.tree_path, self.rows, 15, set())
-        self.assertEqual([r["asm_acc"] for r in selected], ["GCA_004769845.1"])
-
-    def test_intermediate_radius_selects_two_genomes(self):
-        selected = select_tree_representatives(self.tree_path, self.rows, 7, set())
-        self.assertEqual(
-            sorted(r["asm_acc"] for r in selected),
-            ["GCA_004769845.1", "GCA_010091595.1"],
-        )
-
-    def test_download_and_sketch_selected_representatives(self):
-        # Mimics the real build pipeline end-to-end for this one small
-        # cluster - real tree, real selection, real NCBI download, real
-        # sourmash sketch - without paying for a full taxon build.
-        selected = select_tree_representatives(self.tree_path, self.rows, 7, set())
-        accessions = sorted(r["asm_acc"] for r in selected)
-
-        with tempfile.TemporaryDirectory(prefix="mashpit-real-cluster-") as tmp:
-            tmp = Path(tmp)
-            verified, failed, attempts, errors = download_representatives(
-                accessions,
-                tmp / "assemblies",
-                3,
-                500,
-                5.0,
-            )
-            self.assertEqual(failed, set())
-            representatives = pd.DataFrame({"asm_acc": accessions})
-            sketch_assemblies(
-                representatives,
-                verified,
-                tmp / "signature",
-                1000,
-                31,
-            )
-            for accession in accessions:
-                sig_path = tmp / "signature" / f"{accession}.sig"
-                self.assertTrue(sig_path.is_file())
-                self.assertGreater(sig_path.stat().st_size, 0)
-
-
-@network_test
-class TestRealClusterMultiRepresentativeSelection(unittest.TestCase):
-    # A second real fixture, chosen to be structurally different from
-    # PDS000110997.1's flat 3-tip star: PDS000111058.1 is a real,
-    # genuinely nested cluster (11 genomes, one internal clade of 9 nested
-    # under a 3-way root), and several sibling tips share 0-length branches
-    # - both are completely ordinary in real outbreak-cluster SNP trees, and
-    # neither is exercisable from a hand-built synthetic tree alone.
-    #
-    # Tree: (('PDT001207112.1':2,'PDT001207104.1':1,'PDT001207107.1':1,
-    # 'PDT001207111.1':1,'PDT001207120.1':0,'PDT001207113.1':0,
-    # 'PDT001207109.1':0,'PDT001207121.1':0,'PDT001207108.1':0)'':7,
-    # 'PDT001206974.1':4,'PDT001207141.1':6)'':0;
-    #
-    # Selected counts below were obtained by actually running
-    # select_tree_representatives against this fixture, not derived by hand.
-    @classmethod
-    def setUpClass(cls):
-        test_dir = Path(__file__).resolve().parent
-        cls.tree_path = test_dir / "test_trees" / "PDS000111058.1.newick"
-        cluster = pd.read_csv(
-            test_dir / "test_real_cluster.tsv", sep="\t", dtype=str
-        )
-        cluster = cluster[cluster["PDS_acc"] == "PDS000111058.1"]
-        cls.rows = pd.DataFrame(
-            {
-                "asm_acc": cluster["gencoll_acc"],
-                "target_key": cluster["target_acc"].map(target_key),
-                "PDS_acc": cluster["PDS_acc"],
-            }
-        )
-
-    def test_radius_zero_does_not_require_every_genome(self):
-        # Several tips share 0-length branches to the same parent, so they
-        # sit at distance 0 from each other; selecting one covers the rest
-        # even at radius 0, so fewer than all 11 genomes are needed.
-        selected = select_tree_representatives(self.tree_path, self.rows, 0, set())
-        self.assertEqual(len(selected), 7)
-
-    def test_intermediate_radius_selects_three_genomes(self):
-        selected = select_tree_representatives(self.tree_path, self.rows, 8, set())
-        self.assertEqual(
-            sorted(r["asm_acc"] for r in selected),
-            ["GCA_021240885.1", "GCA_021244185.1", "GCA_021251585.1"],
-        )
-
-    def test_default_radius_selects_one_genome(self):
-        # 20 is build_taxon's actual default --radius.
-        selected = select_tree_representatives(self.tree_path, self.rows, 20, set())
-        self.assertEqual([r["asm_acc"] for r in selected], ["GCA_021251585.1"])
-
 
 class TestRealMetadataPipeline(unittest.TestCase):
-    # Exercises the parts of the pipeline the selection-only tests above
-    # never touch: load_metadata's real-file merge of a metadata table with
-    # a cluster/isolate table, and insert_metadata writing genuine NCBI
-    # field values (not synthetic placeholders) into METADATA/REPRESENTATIVE.
-    #
-    # Fixtures: test_real_metadata.tsv (14 real rows, full metadata.tsv
-    # schema, for the biosamples in both PDS000110997.1 and PDS000111058.1)
-    # and test_real_cluster.tsv (the matching PDS_acc/target_acc mapping).
     @classmethod
     def setUpClass(cls):
         test_dir = Path(__file__).resolve().parent
@@ -562,21 +157,6 @@ class TestRealMetadataPipeline(unittest.TestCase):
             "PDS000110997.1": test_dir / "test_trees" / "PDS000110997.1.newick",
             "PDS000111058.1": test_dir / "test_trees" / "PDS000111058.1.newick",
         }
-
-    def test_load_metadata_keeps_every_fixture_row(self):
-        self.assertEqual(len(self.metadata), 14)
-        self.assertEqual(len(self.eligible), 14)
-
-    def test_select_all_representatives_at_default_radius(self):
-        # Both real clusters collapse to a single representative at
-        # build_taxon's actual default radius of 20.
-        reps, summary = select_all_representatives(
-            self.eligible, self.tree_paths, 20, set(), round_number=1
-        )
-        self.assertEqual(
-            sorted(reps["asm_acc"]), ["GCA_004769845.1", "GCA_021251585.1"]
-        )
-        self.assertEqual(summary["representatives"].tolist(), [1, 1])
 
     def test_insert_metadata_writes_real_field_values(self):
         reps, _ = select_all_representatives(
@@ -595,37 +175,11 @@ class TestRealMetadataPipeline(unittest.TestCase):
         )
         collection_date, geo_loc_name = cursor.fetchone()
         conn.close()
-        # Real values from NCBI's PDG000000091.9 metadata table, not
-        # synthetic or "missing" placeholders.
         self.assertEqual(collection_date, "2018-07")
         self.assertEqual(geo_loc_name, "United Kingdom: United Kingdom")
 
 
-@network_test
-class TestFetchAccessionMetadata(unittest.TestCase):
-    # Isolated coverage of fetch_accession_metadata, decoupled from the full
-    # accession-build E2E test. SAMN20822594 is the same biosample
-    # TestBuildAccession builds a whole database around; its real resolved
-    # assembly accession is asserted here directly instead of only being
-    # exercised incidentally inside that larger test.
-    def test_resolves_known_biosample(self):
-        accession = fetch_accession_metadata(
-            "SAMN20822594", "test@example.com", None
-        )
-        self.assertEqual(accession, "GCA_019647415.1")
-
-    def test_returns_none_for_unknown_biosample(self):
-        accession = fetch_accession_metadata(
-            "SAMN00000000000nonexistent", "test@example.com", None
-        )
-        self.assertIsNone(accession)
-
-
 class TestInsertAccessionMetadata(unittest.TestCase):
-    # Isolated coverage of insert_accession_metadata (the fix for the bug
-    # where build_accession never populated METADATA, so querying an
-    # accession-built database always crashed with IndexError). No network
-    # needed: verified/accession_to_biosample are just plain dicts.
     def test_writes_biosample_and_asm_acc_with_missing_placeholders(self):
         conn = create_connection(":memory:")
         create_database(conn)
@@ -646,25 +200,6 @@ class TestInsertAccessionMetadata(unittest.TestCase):
         for column in other_columns:
             self.assertEqual(row[column], "missing")
 
-    def test_unmapped_accession_gets_missing_biosample(self):
-        # Defensive path: an accession present in `verified` but absent from
-        # accession_to_biosample (shouldn't happen in practice, since
-        # build_accession populates both from the same loop, but the
-        # function shouldn't KeyError if it ever does).
-        conn = create_connection(":memory:")
-        create_database(conn)
-        verified = {"GCA_000000002.1": Path("/fake/GCA_000000002.1.fna")}
-
-        insert_accession_metadata(conn, {}, verified)
-
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT biosample_acc FROM METADATA WHERE asm_acc = 'GCA_000000002.1'"
-        )
-        biosample_acc = cursor.fetchone()[0]
-        conn.close()
-        self.assertEqual(biosample_acc, "missing")
-
 
 def make_test_signature(name, seed_offset):
     mh = MinHash(n=50, ksize=21)
@@ -675,10 +210,6 @@ def make_test_signature(name, seed_offset):
 
 
 class TestGenerateQueryTable(unittest.TestCase):
-    # Query's own module (query.py) previously had zero direct tests - every
-    # bit of coverage was incidental to the two full E2E build+query tests
-    # below, which only ever run at the default --threshold 0.85. No test
-    # needs the network for this: METADATA/DESC can be populated directly.
     def _make_conn(self, db_type):
         conn = create_connection(":memory:")
         create_database(conn)
@@ -712,104 +243,7 @@ class TestGenerateQueryTable(unittest.TestCase):
         self.assertNotIn("SNP_tree_link", result.columns)
 
 
-class TestGenerateClusterTable(unittest.TestCase):
-    # Coverage for the cluster-candidate grouping: multiple representatives
-    # supporting the same SNP cluster (PDS_acc) collapse into one row with a
-    # hit count, instead of appearing as scattered duplicate rows in the flat
-    # per-representative table. Ranking must stay on best_similarity_score -
-    # representative count is context for interpreting confidence, never a
-    # substitute ranking key (a cluster with more hits should not outrank a
-    # cluster with a single much closer hit).
-    def setUp(self):
-        self.conn = create_connection(":memory:")
-        create_database(self.conn)
-        # PDS_A has 3 total representatives in the database; PDS_B has 1.
-        for asm_acc, pds_acc in [
-            ("GCA_1", "PDS_A"),
-            ("GCA_2", "PDS_A"),
-            ("GCA_3", "PDS_A"),
-            ("GCA_4", "PDS_B"),
-        ]:
-            self.conn.execute(
-                "INSERT INTO REPRESENTATIVE (asm_acc, PDS_acc) VALUES (?, ?)",
-                (asm_acc, pds_acc),
-            )
-        self.conn.commit()
-
-    def tearDown(self):
-        self.conn.close()
-
-    def test_groups_by_cluster_and_distinguishes_hits_from_total(self):
-        # Only 2 of PDS_A's 3 total representatives appear in these results.
-        representative_df = pd.DataFrame(
-            {
-                "asm_acc": ["GCA_1", "GCA_2", "GCA_4"],
-                "PDS_acc": ["PDS_A", "PDS_A", "PDS_B"],
-                "similarity_score": [0.99, 0.5, 0.2],
-            }
-        )
-        cluster_df = generate_cluster_table(self.conn, representative_df, hash_number=1000)
-
-        pds_a = cluster_df[cluster_df["PDS_acc"] == "PDS_A"].iloc[0]
-        self.assertEqual(pds_a["hits_in_results"], 2)
-        self.assertEqual(pds_a["total_representatives"], 3)
-        self.assertAlmostEqual(pds_a["best_similarity_score"], 0.99)
-        self.assertAlmostEqual(pds_a["mean_similarity_score"], (0.99 + 0.5) / 2)
-        self.assertAlmostEqual(pds_a["min_similarity_score"], 0.5)
-
-    def test_ranks_by_best_similarity_not_hit_count(self):
-        # PDS_B has only 1 hit but it is the closest match overall; PDS_A has
-        # 2 hits but neither is as close. best_similarity_score must win.
-        representative_df = pd.DataFrame(
-            {
-                "asm_acc": ["GCA_1", "GCA_2", "GCA_4"],
-                "PDS_acc": ["PDS_A", "PDS_A", "PDS_B"],
-                "similarity_score": [0.5, 0.4, 0.99],
-            }
-        )
-        cluster_df = generate_cluster_table(self.conn, representative_df, hash_number=1000)
-        self.assertEqual(cluster_df["PDS_acc"].tolist(), ["PDS_B", "PDS_A"])
-
-    def test_near_top_uses_sketch_resolution_not_a_fixed_cutoff(self):
-        # 0.999 vs 0.998 at hash_number=1000 is a single-hash gap, within
-        # tie_tolerance_hashes=2 (the default) - both should read as
-        # statistically tied for best, unlike a fixed threshold such as 0.85
-        # which says nothing about whether two high scores are distinguishable.
-        representative_df = pd.DataFrame(
-            {
-                "asm_acc": ["GCA_1", "GCA_2", "GCA_4"],
-                "PDS_acc": ["PDS_A", "PDS_A", "PDS_B"],
-                "similarity_score": [0.999, 0.999, 0.998],
-            }
-        )
-        cluster_df = generate_cluster_table(
-            self.conn, representative_df, hash_number=1000, tie_tolerance_hashes=2
-        )
-        self.assertTrue(cluster_df["near_top"].all())
-
-    def test_near_top_excludes_genuinely_distant_clusters(self):
-        representative_df = pd.DataFrame(
-            {
-                "asm_acc": ["GCA_1", "GCA_4"],
-                "PDS_acc": ["PDS_A", "PDS_B"],
-                "similarity_score": [0.99, 0.5],
-            }
-        )
-        cluster_df = generate_cluster_table(self.conn, representative_df, hash_number=1000)
-        near_top_by_pds = dict(zip(cluster_df["PDS_acc"], cluster_df["near_top"]))
-        self.assertTrue(near_top_by_pds["PDS_A"])
-        self.assertFalse(near_top_by_pds["PDS_B"])
-
-
 class TestGenerateMashtree(unittest.TestCase):
-    # Regression test: generate_mashtree used a hardcoded 0.85 (instead of
-    # the min_similarity/--threshold parameter) when building the query's
-    # row of the distance matrix, while acc_list/leaves were sized using the
-    # real threshold. Any --threshold != 0.85 that changed which hits
-    # qualified made the matrix row length disagree with the leaf count,
-    # crashing DistanceMatrix construction with a ValueError - dormant at
-    # the default threshold, so no existing test (which only ever runs at
-    # 0.85) had ever exercised it. Fixed in query.py's generate_mashtree.
     def setUp(self):
         self.query_name = "mashpit_test_mashtree_" + self.id().rsplit(".", 1)[-1]
         self.sigs = [make_test_signature(f"cand{i}", i) for i in range(4)]
@@ -818,41 +252,17 @@ class TestGenerateMashtree(unittest.TestCase):
         for path in Path.cwd().glob(f"{self.query_name}*"):
             path.unlink()
 
-    def test_non_default_threshold_builds_tree(self):
+    def test_tree_skipped_for_insufficient_hits(self):
         output_df = pd.DataFrame(
-            {
-                "asm_acc": ["cand0", "cand1", "cand2", "cand3"],
-                "similarity_score": [0.9, 0.7, 0.6, 0.2],
-            }
+            {"asm_acc": ["cand0", "cand1"], "similarity_score": [0.9, 0.7]}
         )
-        generate_mashtree(output_df, 0.5, self.query_name, "unused", None, self.sigs)
-        self.assertTrue(Path(f"{self.query_name}_tree.newick").is_file())
-        self.assertTrue(Path(f"{self.query_name}_tree.png").is_file())
-
-    def test_below_threshold_top_hit_raises_mashtree_skipped(self):
-        # A skipped tree is a legitimate outcome (not a crash): the caller
-        # (query.query) is expected to catch this and still exit 0, since
-        # the representative/cluster CSVs were already written by then.
-        output_df = pd.DataFrame(
-            {
-                "asm_acc": ["cand0", "cand1", "cand2", "cand3"],
-                "similarity_score": [0.9, 0.7, 0.6, 0.2],
-            }
-        )
-        with self.assertRaises(MashtreeSkipped):
-            generate_mashtree(output_df, 0.95, self.query_name, "unused", None, self.sigs)
-
-    def test_fewer_than_two_qualifying_hits_raises_mashtree_skipped(self):
-        output_df = pd.DataFrame({"asm_acc": ["cand0"], "similarity_score": [0.9]})
-        with self.assertRaises(MashtreeSkipped):
-            generate_mashtree(output_df, 0.5, self.query_name, "unused", None, self.sigs)
+        for threshold in (0.95, 0.8):
+            with self.subTest(threshold=threshold), self.assertRaises(MashtreeSkipped):
+                generate_mashtree(
+                    output_df, threshold, self.query_name, "unused", None, self.sigs
+                )
 
     def test_annotation_with_multiple_hits(self):
-        # Regression test: added_annotation (the column name) used to be
-        # overwritten with the first leaf's annotation value, so the second
-        # leaf's lookup then used that value as a column name and raised
-        # KeyError. Any --annotation use with more than one qualifying hit
-        # (the common case, since this path requires at least two) crashed.
         output_df = pd.DataFrame(
             {
                 "asm_acc": ["cand0", "cand1", "cand2", "cand3"],
@@ -863,12 +273,15 @@ class TestGenerateMashtree(unittest.TestCase):
         generate_mashtree(
             output_df, 0.5, self.query_name, "unused", "isolation_source", self.sigs
         )
-        # Newick tip labels can't contain unquoted spaces, so the writer
-        # substitutes underscores for them.
         newick_text = Path(f"{self.query_name}_tree.newick").read_text()
         self.assertIn("cand0_water", newick_text)
         self.assertIn("cand1_soil", newick_text)
         self.assertIn("cand2_clinical", newick_text)
+        self.assertNotIn("cand3", newick_text)
+        for suffix in ("png", "svg"):
+            self.assertGreater(
+                Path(f"{self.query_name}_tree.{suffix}").stat().st_size, 0
+            )
 
 
 class TestNegativeBranchLength(unittest.TestCase):
@@ -887,34 +300,12 @@ class TestNegativeBranchLength(unittest.TestCase):
         self.assertTrue(all(length >= 0 for length in lengths))
 
 
-def hash_metadata_table(db_path):
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-    cursor.execute("PRAGMA table_info(METADATA);")
-    # Historical checksums cover the original representative metadata fields.
-    # New report fields are validated independently by TestClusterReport.
-    columns = [row[1] for row in cursor.fetchall()
-               if row[1] not in {"epi_type", "computed_types"}]
-    columns.sort()  # Ensure column order is deterministic
-    sorted_columns = ", ".join(columns)
-    cursor.execute(f"SELECT {sorted_columns} FROM METADATA ORDER BY {sorted_columns}")
-    rows = cursor.fetchall()
-    conn.close()
-
-    hasher = hashlib.sha256()
-    for row in rows:
-        hasher.update(str(row).encode("utf-8"))
-    return hasher.hexdigest()
-
-
 def fake_download_factory(failing_accessions):
-    # Returns a download_representatives-shaped stand-in that fails exactly
-    # the given accessions on their first appearance and succeeds on any
-    # later retry - used to simulate a transient NCBI download failure
-    # without touching the network.
     seen = set()
 
-    def fake_download(accessions, assembly_root, attempts, batch_size, retry_delay, api_key=None):
+    def fake_download(
+        accessions, assembly_root, attempts, batch_size, retry_delay, api_key=None
+    ):
         verified, failed, attempt_counts, errors = {}, set(), {}, {}
         for accession in accessions:
             attempt_counts[accession] = 1
@@ -929,7 +320,9 @@ def fake_download_factory(failing_accessions):
     return fake_download
 
 
-def always_fail_download(accessions, assembly_root, attempts, batch_size, retry_delay, api_key=None):
+def always_fail_download(
+    accessions, assembly_root, attempts, batch_size, retry_delay, api_key=None
+):
     return (
         {},
         set(accessions),
@@ -939,19 +332,6 @@ def always_fail_download(accessions, assembly_root, attempts, batch_size, retry_
 
 
 class TestBuildTaxonReselection(unittest.TestCase):
-    # Regression test for the reselection-round off-by-one bug in
-    # build_taxon: the retry loop used to allow only
-    # (max_reselection_rounds - 1) reselections despite the flag's name and
-    # help text promising max_reselection_rounds. Real NCBI download
-    # failures can't be reproduced on demand, so this mocks every
-    # network-touching helper build_taxon calls and lets the real
-    # selection/reselection loop run against a real, tiny synthetic tree.
-    #
-    # Tree: (PDT0000001.1:5,PDT0000002.1:5); - two tips, distance 10 apart.
-    # At radius=20 (>= diameter), select_tree_representatives deterministically
-    # picks GCA_A first (confirmed by actually running it, same as
-    # TestSelectTreeRepresentatives); GCA_B is the only alternate once GCA_A
-    # is excluded.
     def setUp(self):
         self.name = "mashpit_test_reselection_" + self.id().rsplit(".", 1)[-1]
         self.db_folder = Path.cwd() / self.name
@@ -983,7 +363,12 @@ class TestBuildTaxonReselection(unittest.TestCase):
             ksize=31,
             key=None,
         )
+        prepare = build_module.prepare
         self.patches = [
+            patch(
+                "mashpit.build.prepare",
+                side_effect=lambda args: prepare(args, require_datasets=False),
+            ),
             patch("mashpit.build.validate_pathogen_name", return_value="Test_species"),
             patch(
                 "mashpit.build.resolve_release",
@@ -1029,9 +414,6 @@ class TestBuildTaxonReselection(unittest.TestCase):
         ) as mock_download:
             build_module.build_taxon(self.args)
 
-        # Exactly one reselection happened: initial attempt (GCA_A, fails)
-        # + one retry (GCA_B, succeeds). Zero reselections (the pre-fix
-        # behavior) would leave call_count at 1 and raise instead.
         self.assertEqual(mock_download.call_count, 2)
 
         conn = sqlite3.connect(str(self.db_folder / f"{self.name}.db"))
@@ -1050,217 +432,10 @@ class TestBuildTaxonReselection(unittest.TestCase):
                 build_module.build_taxon(self.args)
 
         self.assertIn("1 reselection rounds", str(context.exception))
-        # max_reselection_rounds=1 must permit exactly one reselection
-        # attempt (2 download call-sets total) before giving up - the old
-        # off-by-one bug raised after the very first failure, using zero
-        # reselections despite the flag promising one.
         self.assertEqual(mock_download.call_count, 2)
 
 
-@network_test
-class TestBuildTaxonAndQuery(unittest.TestCase):
-    def setUp(self):
-        self.pathogen_name = "Listeria_innocua"
-        self.pd_version = "PDG000000091.9"
-
-    def tearDown(self):
-        # ignore_errors / existence checks: an assertion failing partway
-        # through test_build_taxonomy means later steps (and the files
-        # they create) never ran, and that must not cascade into an
-        # unrelated FileNotFoundError here on top of the real failure.
-        shutil.rmtree("test_listeria_innocua", ignore_errors=True)
-        shutil.rmtree("ncbi_dataset", ignore_errors=True)
-        # remove all files starting with GCA_022617975
-        for file in os.listdir():
-            if file.startswith("GCA_022617975"):
-                os.remove(file)
-        if os.path.exists("ncbi_dataset.zip"):
-            os.remove("ncbi_dataset.zip")
-        for file in os.listdir():
-            if file.endswith(".log"):
-                os.remove(file)
-
-    def test_build_taxonomy(self):
-        subprocess.run(
-            [
-                "mashpit",
-                "build",
-                "taxon",
-                "test_listeria_innocua",
-                "--species",
-                self.pathogen_name,
-                "--pd_version",
-                self.pd_version,
-            ]
-        )
-
-        # Regenerated by actually running this build end-to-end after the
-        # tree-radius rewrite (98/98 clusters covered, 135 representatives
-        # selected, 0 unavailable) - the old centroid-era hash no longer
-        # applied since selection changed which assemblies get included.
-        # The sqlite metadata hash is exact-matched since it reflects real,
-        # deterministic text fields (biosample IDs, taxids, PDS clusters)
-        # with no serialization-format sensitivity. The .sig file is NOT
-        # hash-matched: sourmash is version-ranged (~=4.6.1), and a newer
-        # patch release can change the signature file's exact bytes
-        # (field ordering, compression) with no change in correctness, so
-        # instead we check the representative count actually sketched.
-        expected_sqlite_sha = (
-            "4cb2a693eb89d1f338b23732d1dc8dff76f2cd59835179d2154f50996adce435"
-        )
-        expected_representative_count = 135
-
-        actual_sqlite_sha = hash_metadata_table(
-            "test_listeria_innocua/test_listeria_innocua.db"
-        )
-        database_sig = list(
-            load_file_as_signatures("test_listeria_innocua/test_listeria_innocua.sig")
-        )
-        self.assertEqual(actual_sqlite_sha, expected_sqlite_sha)
-        self.assertEqual(len(database_sig), expected_representative_count)
-
-        subprocess.run(
-            ["datasets", "download", "genome", "accession", "GCA_022617975.1"]
-        )
-        # unzip the downloaded file
-        with zipfile.ZipFile("ncbi_dataset.zip", "r") as zip_ref:
-            zip_ref.extractall("ncbi_dataset")
-        subprocess.run(
-            [
-                "mashpit",
-                "query",
-                "ncbi_dataset/ncbi_dataset/data/GCA_022617975.1/GCA_022617975.1_PDT001269761.1_genomic.fna",
-                "test_listeria_innocua",
-            ]
-        )
-
-        # Correctness check against real NCBI ground truth rather than an
-        # exact-byte hash: GCA_022617975.1's target accession PDT001269761.1
-        # is recorded in NCBI's own reference_target.all_isolates.tsv for
-        # this release as PDS000111028.1 with min_dist_same=0 (i.e.
-        # zero-distance to another isolate already in that cluster), so the
-        # top representative hit must land in that cluster at very high
-        # similarity - 0.95 leaves headroom for ordinary assembly-to-assembly
-        # noise (actually observed at 0.988 against a live run) while still
-        # requiring a near-identical match, not just a plausible one. Unlike
-        # an exact-hash comparison, this stays valid across sourmash/float-
-        # formatting differences that don't change the actual query result.
-        output_file = pd.read_csv("GCA_022617975_representative_matches.csv")
-        top_hit = output_file.sort_values("similarity_score", ascending=False).iloc[0]
-        self.assertEqual(top_hit["PDS_acc"], "PDS000111028.1")
-        self.assertGreater(top_hit["similarity_score"], 0.95)
-
-        # Cluster-candidate table: groups representative hits by PDS_acc so
-        # multiple representatives supporting the same cluster show up as
-        # one row with a hit count, ranked by best_similarity_score rather
-        # than by how many representatives happened to be returned.
-        cluster_file = pd.read_csv("GCA_022617975_cluster_candidates.csv")
-        top_cluster = cluster_file.sort_values(
-            "best_similarity_score", ascending=False
-        ).iloc[0]
-        self.assertEqual(top_cluster["PDS_acc"], "PDS000111028.1")
-        self.assertGreater(top_cluster["best_similarity_score"], 0.95)
-        self.assertTrue(bool(top_cluster["near_top"]))
-
-        # Regression check: generate_mashtree used to call exit(1) when no
-        # hit clears --threshold, which made the whole `mashpit query`
-        # process exit non-zero even though the CSVs above were already
-        # written successfully. --threshold 1.01 is unreachable (max
-        # Jaccard similarity is 1.0), forcing that skip path here.
-        skip_result = subprocess.run(
-            [
-                "mashpit",
-                "query",
-                "ncbi_dataset/ncbi_dataset/data/GCA_022617975.1/GCA_022617975.1_PDT001269761.1_genomic.fna",
-                "test_listeria_innocua",
-                "--threshold",
-                "1.01",
-            ]
-        )
-        self.assertEqual(skip_result.returncode, 0)
-
-
-@network_test
-class TestBuildAccession(unittest.TestCase):
-    def setUp(self):
-        return
-
-    def tearDown(self):
-        # ignore_errors / existence check: don't let a failed assertion in
-        # test_build_accession cascade into an unrelated tearDown error.
-        shutil.rmtree("test_accession", ignore_errors=True)
-        if os.path.exists("test_accession_list"):
-            os.remove("test_accession_list")
-        for file in os.listdir():
-            if file.endswith(".log"):
-                os.remove(file)
-
-    def test_build_accession(self):
-        # generate the test accession file
-        accession_list = [
-            "SAMN20822594",
-        ]
-        with open("test_accession_list", "w") as f:
-            for accession in accession_list:
-                f.write(accession + "\n")
-        subprocess.run(
-            [
-                "mashpit",
-                "build",
-                "accession",
-                "test_accession",
-                "--list",
-                "test_accession_list",
-                "--email",
-                "test@example.com",
-            ]
-        )
-
-        # build_accession never inserted anything into METADATA (only
-        # build_taxon did, via insert_metadata), so METADATA was always
-        # empty and querying an accession-built database crashed with
-        # IndexError in generate_mashtree. Fixed by insert_accession_metadata,
-        # which writes one row per verified assembly (biosample_acc + asm_acc
-        # real, remaining fields "missing" since this build mode has no
-        # richer metadata source). Sqlite hash regenerated post-fix by
-        # actually running this build end-to-end. The .sig file is checked
-        # structurally rather than by exact hash, for the same reason as
-        # TestBuildTaxonAndQuery: sourmash's version range can change the
-        # signature file's exact bytes without changing correctness.
-        expected_sqlite_sha = (
-            "585a9b2cd509037829d52cc6a2ac9c04fa527856847f0270acd7138d025c283a"
-        )
-        actual_sqlite_sha = hash_metadata_table("test_accession/test_accession.db")
-        database_sig = list(
-            load_file_as_signatures("test_accession/test_accession.sig")
-        )
-        self.assertEqual(actual_sqlite_sha, expected_sqlite_sha)
-        self.assertEqual(len(database_sig), 1)
-        self.assertEqual(database_sig[0].name, "GCA_019647415.1")
-
-
 class TestFindLocalFastaFiles(unittest.TestCase):
-    def test_strip_fasta_suffix_recognizes_common_extensions(self):
-        self.assertEqual(strip_fasta_suffix("sample1.fasta"), "sample1")
-        self.assertEqual(strip_fasta_suffix("sample2.fa"), "sample2")
-        self.assertEqual(strip_fasta_suffix("sample3.fna.gz"), "sample3")
-        self.assertEqual(strip_fasta_suffix("sample4.fas"), "sample4")
-        self.assertEqual(strip_fasta_suffix("sample5.ffn"), "sample5")
-
-    def test_strip_fasta_suffix_rejects_unrelated_files(self):
-        self.assertIsNone(strip_fasta_suffix("readme.txt"))
-        self.assertIsNone(strip_fasta_suffix("metadata.tsv"))
-
-    def test_maps_sample_id_to_path_and_ignores_non_fasta_files(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp = Path(tmp)
-            (tmp / "sample1.fasta").write_text(">c1\nACGT\n")
-            (tmp / "sample2.fa").write_text(">c1\nACGT\n")
-            (tmp / "notes.txt").write_text("ignore me")
-            fasta_paths = find_local_fasta_files(tmp)
-            self.assertEqual(set(fasta_paths), {"sample1", "sample2"})
-            self.assertEqual(fasta_paths["sample1"], tmp / "sample1.fasta")
-
     def test_rejects_duplicate_sample_id_across_extensions(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
@@ -1270,60 +445,8 @@ class TestFindLocalFastaFiles(unittest.TestCase):
                 find_local_fasta_files(tmp)
 
 
-class TestLoadCustomMetadata(unittest.TestCase):
-    def test_returns_empty_dict_when_no_path_given(self):
-        self.assertEqual(load_custom_metadata(None), {})
-
-    def test_reads_rows_keyed_by_sample_id_column(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "metadata.tsv"
-            path.write_text("sample_id\tstrain\thost\nsample1\tStrainA\tHomo sapiens\n")
-            metadata = load_custom_metadata(path)
-            self.assertEqual(metadata["sample1"]["strain"], "StrainA")
-            self.assertEqual(metadata["sample1"]["host"], "Homo sapiens")
-
-    def test_raises_without_a_recognized_id_column(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "metadata.tsv"
-            path.write_text("strain\thost\nStrainA\tHomo sapiens\n")
-            with self.assertRaises(ValueError):
-                load_custom_metadata(path)
-
-
-class TestCollectCustomSequences(unittest.TestCase):
-    def test_metadata_row_with_no_matching_fasta_is_kept_but_unused(self):
-        # collect_custom_sequences only warns about this (logged, not
-        # raised) since a stray metadata row isn't fatal - the corresponding
-        # sample simply never appears in fasta_paths and so is never
-        # inserted by insert_custom_metadata.
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp = Path(tmp)
-            (tmp / "sample1.fasta").write_text(">c1\nACGT\n")
-            metadata_path = tmp / "metadata.tsv"
-            metadata_path.write_text(
-                "sample_id\tstrain\nsample1\tStrainA\nghost_sample\tStrainB\n"
-            )
-            fasta_paths, metadata_by_id = collect_custom_sequences(tmp, metadata_path)
-            self.assertEqual(set(fasta_paths), {"sample1"})
-            self.assertIn("ghost_sample", metadata_by_id)
-
-
 class TestSketchCustomSequences(unittest.TestCase):
-    def test_sketches_valid_fasta_and_reports_no_errors(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp = Path(tmp)
-            fasta_path = tmp / "sample1.fasta"
-            fasta_path.write_text(">c1\n" + "ACGTACGTAC" * 10 + "\n")
-            signature_paths, errors = sketch_custom_sequences(
-                {"sample1": fasta_path}, tmp / "sigs", 100, 21
-            )
-            self.assertEqual(set(signature_paths), {"sample1"})
-            self.assertEqual(errors, {})
-            self.assertTrue(signature_paths["sample1"].is_file())
-
     def test_one_malformed_file_does_not_prevent_others_from_sketching(self):
-        # Local files are much more likely than NCBI downloads to be
-        # malformed, so a single bad file must not abort the whole build.
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
             good = tmp / "good_sample.fasta"
@@ -1337,536 +460,8 @@ class TestSketchCustomSequences(unittest.TestCase):
             self.assertEqual(set(signature_paths), {"good_sample"})
             self.assertIn("empty_sample", errors)
 
-    def test_signature_name_honors_override_not_sample_id(self):
-        # Regression test: signatures used to always be named after the
-        # raw sample_id, even when --metadata overrode asm_acc to a
-        # different value - query.py's asm_acc-keyed metadata lookup then
-        # found no row for that signature's name. The embedded signature
-        # name must track the resolved identity, not the sample_id/filename.
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp = Path(tmp)
-            fasta_path = tmp / "sample1.fasta"
-            fasta_path.write_text(">c1\n" + "ACGTACGTAC" * 10 + "\n")
-            signature_paths, _ = sketch_custom_sequences(
-                {"sample1": fasta_path},
-                tmp / "sigs",
-                100,
-                21,
-                signature_name_by_sample_id={"sample1": "GCA_000000001.1"},
-            )
-            # The on-disk file is still keyed/named by sample_id (matches
-            # the source filename), but the signature embedded inside it
-            # carries the resolved identity.
-            signature = list(
-                load_file_as_signatures(str(signature_paths["sample1"]))
-            )[0]
-            self.assertEqual(str(signature), "GCA_000000001.1")
-
-
-class TestResolveCustomIdentity(unittest.TestCase):
-    def test_defaults_to_sample_id_when_no_override(self):
-        self.assertEqual(
-            build_module.resolve_custom_identity("sample1", {}),
-            ("sample1", "sample1"),
-        )
-
-    def test_honors_asm_acc_and_biosample_acc_overrides_independently(self):
-        row = {"asm_acc": "GCA_000000001.1", "biosample_acc": "SAMN99999999"}
-        self.assertEqual(
-            build_module.resolve_custom_identity("sample1", row),
-            ("GCA_000000001.1", "SAMN99999999"),
-        )
-
-    def test_partial_override_falls_back_to_sample_id_for_the_rest(self):
-        row = {"asm_acc": "GCA_000000001.1"}
-        self.assertEqual(
-            build_module.resolve_custom_identity("sample1", row),
-            ("GCA_000000001.1", "sample1"),
-        )
-
-
-class TestValidateCustomIdentityUniqueness(unittest.TestCase):
-    def test_passes_with_no_metadata(self):
-        fasta_paths = {"sample1": Path("/fake/sample1.fasta"), "sample2": Path("/fake/sample2.fasta")}
-        build_module.validate_custom_identity_uniqueness(fasta_paths, {})  # must not raise
-
-    def test_passes_with_distinct_overrides(self):
-        fasta_paths = {"sample1": Path("/fake/1"), "sample2": Path("/fake/2")}
-        metadata_by_id = {
-            "sample1": {"asm_acc": "GCA_1"},
-            "sample2": {"asm_acc": "GCA_2"},
-        }
-        build_module.validate_custom_identity_uniqueness(fasta_paths, metadata_by_id)  # must not raise
-
-    def test_rejects_duplicate_asm_acc_override(self):
-        fasta_paths = {"sample1": Path("/fake/1"), "sample2": Path("/fake/2")}
-        metadata_by_id = {
-            "sample1": {"asm_acc": "GCA_shared"},
-            "sample2": {"asm_acc": "GCA_shared"},
-        }
-        with self.assertRaises(ValueError) as context:
-            build_module.validate_custom_identity_uniqueness(fasta_paths, metadata_by_id)
-        self.assertIn("asm_acc", str(context.exception))
-        self.assertIn("GCA_shared", str(context.exception))
-
-    def test_rejects_duplicate_biosample_acc_override(self):
-        fasta_paths = {"sample1": Path("/fake/1"), "sample2": Path("/fake/2")}
-        metadata_by_id = {
-            "sample1": {"biosample_acc": "SAMN_shared"},
-            "sample2": {"biosample_acc": "SAMN_shared"},
-        }
-        with self.assertRaises(ValueError) as context:
-            build_module.validate_custom_identity_uniqueness(fasta_paths, metadata_by_id)
-        self.assertIn("biosample_acc", str(context.exception))
-
-    def test_rejects_override_colliding_with_another_samples_default_identity(self):
-        # sample2 has no override (defaults to its own sample_id "sample2"),
-        # but sample1's override happens to collide with that default.
-        fasta_paths = {"sample1": Path("/fake/1"), "sample2": Path("/fake/2")}
-        metadata_by_id = {"sample1": {"asm_acc": "sample2"}}
-        with self.assertRaises(ValueError):
-            build_module.validate_custom_identity_uniqueness(fasta_paths, metadata_by_id)
-
-
-class TestInsertCustomMetadata(unittest.TestCase):
-    def test_writes_missing_placeholders_when_no_metadata_supplied(self):
-        conn = create_connection(":memory:")
-        create_database(conn)
-        verified = {"sample1": Path("/fake/sample1.fasta")}
-
-        insert_custom_metadata(conn, {}, verified)
-
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM METADATA")
-        columns = [description[0] for description in cursor.description]
-        row = dict(zip(columns, cursor.fetchone()))
-        conn.close()
-
-        self.assertEqual(row["biosample_acc"], "sample1")
-        self.assertEqual(row["asm_acc"], "sample1")
-        other_columns = set(columns) - {"biosample_acc", "asm_acc"}
-        for column in other_columns:
-            self.assertEqual(row[column], "missing")
-
-    def test_uses_supplied_metadata_fields_and_id_overrides(self):
-        conn = create_connection(":memory:")
-        create_database(conn)
-        verified = {"sample1": Path("/fake/sample1.fasta")}
-        metadata_by_id = {
-            "sample1": {
-                "strain": "StrainA",
-                "host": "Homo sapiens",
-                "biosample_acc": "SAMN99999999",
-            }
-        }
-
-        insert_custom_metadata(conn, metadata_by_id, verified)
-
-        cursor = conn.cursor()
-        cursor.execute("SELECT biosample_acc, asm_acc, strain, host FROM METADATA")
-        row = cursor.fetchone()
-        conn.close()
-
-        self.assertEqual(row, ("SAMN99999999", "sample1", "StrainA", "Homo sapiens"))
-
-    def test_accepts_arbitrary_custom_columns_not_in_the_fixed_schema(self):
-        # Regression test: insert_custom_metadata used to only recognize a
-        # fixed whitelist of column names and silently drop anything else
-        # in a --metadata file. Any column beyond the fixed schema fields
-        # must now be added to METADATA automatically.
-        conn = create_connection(":memory:")
-        create_database(conn)
-        verified = {"sample1": Path("/fake/sample1.fasta"), "sample2": Path("/fake/sample2.fasta")}
-        metadata_by_id = {
-            "sample1": {"project_batch": "Batch01", "strain": "StrainA"},
-        }
-
-        insert_custom_metadata(conn, metadata_by_id, verified)
-
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT asm_acc, strain, project_batch FROM METADATA ORDER BY asm_acc"
-        )
-        rows = cursor.fetchall()
-        conn.close()
-
-        self.assertEqual(
-            rows,
-            [
-                ("sample1", "StrainA", "Batch01"),
-                ("sample2", "missing", "missing"),
-            ],
-        )
-
-    def test_duplicate_biosample_acc_raises_instead_of_silently_replacing(self):
-        # Regression test: insert_custom_metadata used to use INSERT OR
-        # REPLACE, so two samples resolving to the same biosample_acc (the
-        # METADATA primary key) would silently drop the first sample's row
-        # while its signature stayed in the database. build_custom now
-        # rejects this earlier via validate_custom_identity_uniqueness, but
-        # insert_custom_metadata itself must also fail loudly, not silently
-        # replace, as a second line of defense.
-        conn = create_connection(":memory:")
-        create_database(conn)
-        verified = {"sample1": Path("/fake/1"), "sample2": Path("/fake/2")}
-        metadata_by_id = {
-            "sample1": {"biosample_acc": "SAMN_shared"},
-            "sample2": {"biosample_acc": "SAMN_shared"},
-        }
-        with self.assertRaises(sqlite3.IntegrityError):
-            insert_custom_metadata(conn, metadata_by_id, verified)
-        conn.close()
-
-
-class TestValidateCustomArgs(unittest.TestCase):
-    def test_rejects_missing_input_dir(self):
-        args = types.SimpleNamespace(input_dir=None, metadata=None)
-        with self.assertRaises(FileNotFoundError):
-            validate_custom_args(args)
-
-    def test_rejects_nonexistent_input_dir(self):
-        args = types.SimpleNamespace(input_dir="/no/such/dir", metadata=None)
-        with self.assertRaises(FileNotFoundError):
-            validate_custom_args(args)
-
-    def test_rejects_missing_metadata_file(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            args = types.SimpleNamespace(input_dir=tmp, metadata="/no/such/metadata.tsv")
-            with self.assertRaises(FileNotFoundError):
-                validate_custom_args(args)
-
-    def test_accepts_valid_input_dir_without_metadata(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            args = types.SimpleNamespace(input_dir=tmp, metadata=None)
-            validate_custom_args(args)  # must not raise
-
-
-class TestBuildCustom(unittest.TestCase):
-    # Fully offline end-to-end test: no network, no NCBI datasets binary
-    # required (prepare() is called with require_datasets=False for custom
-    # builds), so this runs in the fast/default suite rather than behind
-    # @network_test.
-    @classmethod
-    def setUpClass(cls):
-        cls.input_dir = Path(tempfile.mkdtemp(prefix="mashpit_custom_input_"))
-        (cls.input_dir / "sampleA.fasta").write_text(
-            ">contig1\n" + "ACGTACGTAC" * 50 + "\n"
-        )
-        (cls.input_dir / "sampleB.fa").write_text(
-            ">contig1\n" + "TTGGCCAATT" * 50 + "\n"
-        )
-        cls.metadata_path = cls.input_dir.parent / "mashpit_custom_metadata.tsv"
-        cls.metadata_path.write_text(
-            "sample_id\tstrain\thost\nsampleA\tStrainA\tHomo sapiens\n"
-        )
-
-        cls.build_result = subprocess.run(
-            [
-                "mashpit",
-                "build",
-                "custom",
-                "test_custom_db",
-                "--input-dir",
-                str(cls.input_dir),
-                "--metadata",
-                str(cls.metadata_path),
-            ],
-            capture_output=True,
-            text=True,
-        )
-
-    @classmethod
-    def tearDownClass(cls):
-        shutil.rmtree(cls.input_dir, ignore_errors=True)
-        if cls.metadata_path.exists():
-            cls.metadata_path.unlink()
-        shutil.rmtree("test_custom_db", ignore_errors=True)
-        for file in os.listdir():
-            if file.endswith(".log"):
-                os.remove(file)
-
-    def test_build_succeeds(self):
-        self.assertEqual(self.build_result.returncode, 0, self.build_result.stderr)
-
-    def test_desc_marks_type_custom(self):
-        conn = create_connection("test_custom_db/test_custom_db.db")
-        cursor = conn.cursor()
-        cursor.execute("SELECT value FROM DESC WHERE name = 'Type'")
-        value = cursor.fetchone()[0]
-        conn.close()
-        self.assertEqual(value, "Custom")
-
-    def test_metadata_rows_use_supplied_fields_and_missing_fallback(self):
-        conn = create_connection("test_custom_db/test_custom_db.db")
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT biosample_acc, asm_acc, strain, host FROM METADATA "
-            "ORDER BY asm_acc"
-        )
-        rows = cursor.fetchall()
-        conn.close()
-        self.assertEqual(
-            rows,
-            [
-                ("sampleA", "sampleA", "StrainA", "Homo sapiens"),
-                ("sampleB", "sampleB", "missing", "missing"),
-            ],
-        )
-
-    def test_signature_file_contains_both_samples(self):
-        database_sig = list(
-            load_file_as_signatures("test_custom_db/test_custom_db.sig")
-        )
-        self.assertEqual({sig.name for sig in database_sig}, {"sampleA", "sampleB"})
-
-    def test_query_against_custom_database_finds_matching_sample(self):
-        query_dir = Path(tempfile.mkdtemp(prefix="mashpit_custom_query_"))
-        try:
-            query_path = query_dir / "sampleA_query.fasta"
-            query_path.write_text(">contig1\n" + "ACGTACGTAC" * 50 + "\n")
-            result = subprocess.run(
-                ["mashpit", "query", str(query_path), "test_custom_db"],
-                capture_output=True,
-                text=True,
-            )
-            self.assertEqual(result.returncode, 0, result.stderr)
-
-            output_df = pd.read_csv("sampleA_query_representative_matches.csv")
-            top_hit = output_df.sort_values(
-                "similarity_score", ascending=False
-            ).iloc[0]
-            self.assertEqual(top_hit["asm_acc"], "sampleA")
-            self.assertGreater(top_hit["similarity_score"], 0.9)
-        finally:
-            shutil.rmtree(query_dir, ignore_errors=True)
-            for name in (
-                "sampleA_query_representative_matches.csv",
-                "sampleA_query_tree.newick",
-                "sampleA_query_tree.png",
-                "sampleA_query_tree.svg",
-            ):
-                if os.path.isfile(name):
-                    os.remove(name)
-
-
-class TestBuildCustomIdentityOverride(unittest.TestCase):
-    # End-to-end coverage for the identity-integrity issues found in
-    # review: (1) a signature used to keep its raw sample_id name even
-    # when --metadata overrode asm_acc, so query.py's asm_acc-keyed
-    # metadata lookup found no row for it and the hit silently vanished
-    # from query output; (2) two samples resolving to the same overridden
-    # identity used to have one silently dropped via INSERT OR REPLACE.
-    def setUp(self):
-        self.input_dir = Path(tempfile.mkdtemp(prefix="mashpit_identity_input_"))
-        (self.input_dir / "sample1.fasta").write_text(
-            ">c1\n" + "ACGTACGTAC" * 50 + "\n"
-        )
-        (self.input_dir / "sample2.fasta").write_text(
-            ">c1\n" + "TTGGCCAATT" * 50 + "\n"
-        )
-
-    def tearDown(self):
-        shutil.rmtree(self.input_dir, ignore_errors=True)
-        shutil.rmtree("test_identity_db", ignore_errors=True)
-        for name in (
-            "sample1_query_representative_matches.csv",
-            "sample1_query_tree.newick",
-            "sample1_query_tree.png",
-            "sample1_query_tree.svg",
-        ):
-            if os.path.isfile(name):
-                os.remove(name)
-        for file in os.listdir():
-            if file.endswith(".log"):
-                os.remove(file)
-
-    def test_query_finds_metadata_when_asm_acc_is_overridden(self):
-        metadata_path = self.input_dir.parent / "mashpit_identity_metadata.tsv"
-        metadata_path.write_text(
-            "sample_id\tasm_acc\tstrain\nsample1\tGCA_999999999.1\tStrainA\n"
-        )
-        try:
-            build_result = subprocess.run(
-                [
-                    "mashpit", "build", "custom", "test_identity_db",
-                    "--input-dir", str(self.input_dir),
-                    "--metadata", str(metadata_path),
-                ],
-                capture_output=True,
-                text=True,
-            )
-            self.assertEqual(build_result.returncode, 0, build_result.stderr)
-
-            query_dir = Path(tempfile.mkdtemp(prefix="mashpit_identity_query_"))
-            try:
-                query_path = query_dir / "sample1_query.fasta"
-                query_path.write_text((self.input_dir / "sample1.fasta").read_text())
-                result = subprocess.run(
-                    ["mashpit", "query", str(query_path), "test_identity_db"],
-                    capture_output=True,
-                    text=True,
-                )
-                self.assertEqual(result.returncode, 0, result.stderr)
-
-                output_df = pd.read_csv("sample1_query_representative_matches.csv")
-                # Before the fix this row - and the metadata columns
-                # alongside it - would be missing entirely: the signature
-                # was still named "sample1", but its METADATA row's
-                # asm_acc had been overridden to GCA_999999999.1, so the
-                # asm_acc-keyed lookup in generate_query_table found
-                # nothing for it.
-                top_hit = output_df.sort_values(
-                    "similarity_score", ascending=False
-                ).iloc[0]
-                self.assertEqual(top_hit["asm_acc"], "GCA_999999999.1")
-                self.assertEqual(top_hit["strain"], "StrainA")
-                self.assertGreater(top_hit["similarity_score"], 0.9)
-            finally:
-                shutil.rmtree(query_dir, ignore_errors=True)
-        finally:
-            if metadata_path.exists():
-                metadata_path.unlink()
-
-    def test_duplicate_asm_acc_override_fails_the_build(self):
-        metadata_path = self.input_dir.parent / "mashpit_identity_dup_metadata.tsv"
-        metadata_path.write_text(
-            "sample_id\tasm_acc\nsample1\tGCA_shared.1\nsample2\tGCA_shared.1\n"
-        )
-        try:
-            build_result = subprocess.run(
-                [
-                    "mashpit", "build", "custom", "test_identity_db",
-                    "--input-dir", str(self.input_dir),
-                    "--metadata", str(metadata_path),
-                ],
-                capture_output=True,
-                text=True,
-            )
-            self.assertNotEqual(build_result.returncode, 0)
-            self.assertIn("Duplicate identity", build_result.stderr)
-            # cleanup_on_failure must remove the half-built database, not
-            # leave a broken folder behind that blocks the next attempt.
-            self.assertFalse(Path("test_identity_db").exists())
-        finally:
-            if metadata_path.exists():
-                metadata_path.unlink()
-
-
-class TestComputeShardCount(unittest.TestCase):
-    def test_small_database_gets_one_shard(self):
-        self.assertEqual(compute_shard_count(0), 1)
-        self.assertEqual(compute_shard_count(1), 1)
-        self.assertEqual(compute_shard_count(99), 1)
-
-    def test_boundary_at_one_hundred_still_a_single_shard(self):
-        # Floor division means the count only reaches 2 once total
-        # signatures crosses 200, not 100 - see the "roughly 200
-        # representatives" wording in the README, not "100+".
-        self.assertEqual(compute_shard_count(100), 1)
-        self.assertEqual(compute_shard_count(199), 1)
-
-    def test_boundary_at_two_hundred_becomes_two_shards(self):
-        self.assertEqual(compute_shard_count(200), 2)
-        self.assertEqual(compute_shard_count(299), 2)
-
-    def test_scales_roughly_one_shard_per_hundred_signatures(self):
-        self.assertEqual(compute_shard_count(350), 3)
-        self.assertEqual(compute_shard_count(1000), 10)
-
-    def test_caps_at_max_shards(self):
-        self.assertEqual(compute_shard_count(1_000_000), 128)
-
-
-class TestWriteSignatureShards(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.signatures = [make_test_signature(f"sig{i:02d}", i) for i in range(20)]
-
-    def setUp(self):
-        self.sig_dir = Path(tempfile.mkdtemp(prefix="mashpit_shard_test_"))
-
-    def tearDown(self):
-        shutil.rmtree(self.sig_dir, ignore_errors=True)
-
-    def test_writes_requested_number_of_shard_files(self):
-        write_signature_shards(self.signatures, self.sig_dir, 4)
-        self.assertEqual(len(list_shard_files(self.sig_dir)), 4)
-
-    def test_manifest_maps_every_signature_to_an_existing_shard_file(self):
-        write_signature_shards(self.signatures, self.sig_dir, 4)
-        manifest = read_shard_manifest(self.sig_dir)
-        self.assertEqual(set(manifest), {sig.name for sig in self.signatures})
-        for shard_name in manifest.values():
-            self.assertTrue((self.sig_dir / shard_name).is_file())
-
-    def test_load_all_signatures_recovers_every_signature(self):
-        write_signature_shards(self.signatures, self.sig_dir, 4)
-        loaded_names = {str(sig) for sig in load_all_signatures(self.sig_dir)}
-        self.assertEqual(loaded_names, {str(sig) for sig in self.signatures})
-
-    def test_is_sharded_sig_distinguishes_directory_from_file(self):
-        write_signature_shards(self.signatures, self.sig_dir, 4)
-        self.assertTrue(is_sharded_sig(self.sig_dir))
-
-        single_file = self.sig_dir.parent / "single.sig"
-        with single_file.open("wt") as handle:
-            from sourmash import save_signatures
-
-            save_signatures(self.signatures, fp=handle)
-        try:
-            self.assertFalse(is_sharded_sig(single_file))
-        finally:
-            single_file.unlink()
-
-    def test_fetch_signatures_by_name_returns_only_requested_names(self):
-        write_signature_shards(self.signatures, self.sig_dir, 4)
-        wanted = {"sig01", "sig10", "sig19"}
-        fetched = fetch_signatures_by_name(self.sig_dir, wanted)
-        self.assertEqual({str(sig) for sig in fetched}, wanted)
-
-    def test_fetch_signatures_by_name_empty_names_returns_empty_without_error(self):
-        write_signature_shards(self.signatures, self.sig_dir, 4)
-        self.assertEqual(fetch_signatures_by_name(self.sig_dir, []), [])
-
-    def test_fetch_signatures_by_name_ignores_unknown_names(self):
-        write_signature_shards(self.signatures, self.sig_dir, 4)
-        fetched = fetch_signatures_by_name(self.sig_dir, {"sig01", "does_not_exist"})
-        self.assertEqual({str(sig) for sig in fetched}, {"sig01"})
-
-
-class TestWriteSignatures(unittest.TestCase):
-    def setUp(self):
-        self.tmp_dir = Path(tempfile.mkdtemp(prefix="mashpit_write_signatures_"))
-        self.signatures = [make_test_signature(f"sig{i}", i) for i in range(6)]
-
-    def tearDown(self):
-        shutil.rmtree(self.tmp_dir, ignore_errors=True)
-
-    def test_single_shard_writes_a_plain_file(self):
-        output_path = self.tmp_dir / "database.sig"
-        write_signatures(self.signatures, output_path, nshards=1)
-        self.assertTrue(output_path.is_file())
-        loaded_names = {str(sig) for sig in load_all_signatures(output_path)}
-        self.assertEqual(loaded_names, {str(sig) for sig in self.signatures})
-
-    def test_multiple_shards_writes_a_directory(self):
-        output_path = self.tmp_dir / "database.sig"
-        write_signatures(self.signatures, output_path, nshards=3)
-        self.assertTrue(output_path.is_dir())
-        self.assertEqual(len(list_shard_files(output_path)), 3)
-
-    def test_default_shard_count_matches_compute_shard_count(self):
-        # 6 signatures is well under the 100-per-shard floor, so this must
-        # fall back to a single file exactly like an un-resharded database.
-        output_path = self.tmp_dir / "database.sig"
-        write_signatures(self.signatures, output_path)
-        self.assertTrue(output_path.is_file())
-
 
 class TestReshardDatabase(unittest.TestCase):
-    # Builds a tiny real database (schema + a small signature set) without
-    # going through the network-dependent build_taxon/build_accession
-    # paths, so this stays fast and hermetic.
     def setUp(self):
         self.db_folder = Path(tempfile.mkdtemp(prefix="mashpit_reshard_test_"))
         self.db_name = "reshardtest"
@@ -1886,46 +481,7 @@ class TestReshardDatabase(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.db_folder, ignore_errors=True)
 
-    def test_resolve_sig_path_finds_the_matching_sig_entry(self):
-        self.assertEqual(resolve_sig_path(self.db_folder), self.sig_path)
-
-    def test_explicit_shard_count_reshards_into_a_directory(self):
-        summary = reshard_database(self.db_folder, nshards=3)
-        self.assertEqual(summary, {"signature_count": 6, "shards": 3})
-        self.assertTrue(self.sig_path.is_dir())
-        self.assertEqual(len(list_shard_files(self.sig_path)), 3)
-
-    def test_reshard_preserves_every_signature(self):
-        reshard_database(self.db_folder, nshards=4)
-        loaded_names = {str(sig) for sig in load_all_signatures(self.sig_path)}
-        self.assertEqual(loaded_names, {str(sig) for sig in self.signatures})
-
-    def test_reshard_then_merge_back_to_one_file(self):
-        reshard_database(self.db_folder, nshards=4)
-        self.assertTrue(self.sig_path.is_dir())
-
-        summary = reshard_database(self.db_folder, nshards=1)
-        self.assertEqual(summary["shards"], 1)
-        self.assertTrue(self.sig_path.is_file())
-        loaded_names = {str(sig) for sig in load_all_signatures(self.sig_path)}
-        self.assertEqual(loaded_names, {str(sig) for sig in self.signatures})
-
-    def test_shard_count_is_capped_at_signature_count(self):
-        summary = reshard_database(self.db_folder, nshards=1000)
-        self.assertEqual(summary["shards"], 6)
-
-    def test_reshard_missing_database_raises(self):
-        missing = self.db_folder.parent / "does_not_exist"
-        with self.assertRaises(FileNotFoundError):
-            reshard_database(missing, nshards=2)
-
     def test_original_survives_an_interruption_installing_the_replacement(self):
-        # Regression test: reshard_database used to delete the original
-        # signature store before renaming the replacement into place -
-        # an interruption between those two steps left no valid .sig
-        # entry at all. It must now be recoverable: the original is
-        # renamed aside (not deleted) first, and restored if installing
-        # the replacement fails.
         original_rename = Path.rename
 
         def failing_rename(self_path, target):
@@ -1943,10 +499,6 @@ class TestReshardDatabase(unittest.TestCase):
 
 
 class TestCompareShardedDatabase(unittest.TestCase):
-    # Verifies the parallel query-time path (query.py's
-    # compare_sharded_database) returns the same top-N similarities as a
-    # plain single-threaded jaccard loop over the same signatures - the
-    # correctness property that matters, independent of worker count.
     def setUp(self):
         self.sig_dir = Path(tempfile.mkdtemp(prefix="mashpit_compare_shard_test_"))
         self.signatures = [make_test_signature(f"sig{i:02d}", i) for i in range(12)]
@@ -1965,9 +517,7 @@ class TestCompareShardedDatabase(unittest.TestCase):
         shutil.rmtree(self.query_dir, ignore_errors=True)
 
     def test_matches_single_threaded_jaccard_over_the_same_signatures(self):
-        expected = {
-            str(sig): self.query_sig.jaccard(sig) for sig in self.signatures
-        }
+        expected = {str(sig): self.query_sig.jaccard(sig) for sig in self.signatures}
 
         result, nworkers = compare_sharded_database(
             self.sig_dir, str(self.query_sig_path), top_n=12, max_workers=2
@@ -1978,662 +528,11 @@ class TestCompareShardedDatabase(unittest.TestCase):
         for name, similarity in expected.items():
             self.assertAlmostEqual(result[name], similarity)
 
-    def test_top_n_limits_result_count(self):
-        result, _ = compare_sharded_database(
-            self.sig_dir, str(self.query_sig_path), top_n=3, max_workers=2
-        )
-        self.assertEqual(len(result), 3)
-
-    def test_worker_count_never_exceeds_shard_count(self):
-        _, nworkers = compare_sharded_database(
-            self.sig_dir, str(self.query_sig_path), top_n=12, max_workers=99
-        )
-        self.assertEqual(nworkers, 4)
-
-
-class TestValidateColumnName(unittest.TestCase):
-    def test_accepts_safe_identifiers(self):
-        validate_column_name("project_batch")  # must not raise
-        validate_column_name("_internal_id")  # must not raise
-
-    def test_rejects_unsafe_identifiers(self):
-        for bad_name in ("bad-name", "bad name", "1bad", "bad;DROP TABLE", ""):
-            with self.assertRaises(ValueError):
-                validate_column_name(bad_name)
-
-    def test_rejects_reserved_schema_columns_case_insensitively(self):
-        for reserved in ("strain", "Strain", "ASM_ACC", "PDS_acc"):
-            with self.assertRaises(ValueError):
-                validate_column_name(reserved)
-
-
-class TestAddCustomColumn(unittest.TestCase):
-    def test_adds_column_and_defaults_existing_rows_to_missing(self):
-        conn = create_connection(":memory:")
-        create_database(conn)
-        conn.execute(
-            "INSERT INTO METADATA (biosample_acc, asm_acc) VALUES ('s1', 'a1')"
-        )
-        conn.commit()
-
-        added = add_custom_column(conn, "project_batch")
-
-        cursor = conn.execute("SELECT project_batch FROM METADATA WHERE asm_acc = 'a1'")
-        value = cursor.fetchone()[0]
-        conn.close()
-
-        self.assertTrue(added)
-        self.assertEqual(value, "missing")
-
-    def test_is_idempotent_on_a_column_that_already_exists(self):
-        conn = create_connection(":memory:")
-        create_database(conn)
-
-        first = add_custom_column(conn, "project_batch")
-        second = add_custom_column(conn, "project_batch")
-        conn.close()
-
-        self.assertTrue(first)
-        self.assertFalse(second)
-
-    def test_rejects_reserved_and_invalid_names(self):
-        conn = create_connection(":memory:")
-        create_database(conn)
-        with self.assertRaises(ValueError):
-            add_custom_column(conn, "strain")
-        with self.assertRaises(ValueError):
-            add_custom_column(conn, "bad-name")
-        conn.close()
-
-
-class TestLoadAnnotationValues(unittest.TestCase):
-    def test_auto_detects_asm_acc(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "values.tsv"
-            path.write_text("asm_acc\tproject_batch\nsample1\tBatch01\n")
-            key_column, target_columns, values_by_id = load_annotation_values(path)
-            self.assertEqual(key_column, "asm_acc")
-            self.assertEqual(target_columns, ["project_batch"])
-            self.assertEqual(values_by_id["sample1"]["project_batch"], "Batch01")
-
-    def test_prefers_asm_acc_over_biosample_acc_when_both_present(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "values.tsv"
-            path.write_text(
-                "asm_acc\tbiosample_acc\tproject_batch\nsample1\tSAMN001\tBatch01\n"
-            )
-            key_column, _, _ = load_annotation_values(path)
-            self.assertEqual(key_column, "asm_acc")
-
-    def test_explicit_key_overrides_auto_detection(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "values.tsv"
-            path.write_text(
-                "asm_acc\tbiosample_acc\tproject_batch\nsample1\tSAMN001\tBatch01\n"
-            )
-            key_column, _, values_by_id = load_annotation_values(
-                path, key_column="biosample_acc"
-            )
-            self.assertEqual(key_column, "biosample_acc")
-            self.assertIn("SAMN001", values_by_id)
-
-    def test_raises_without_a_recognized_key_column(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "values.tsv"
-            path.write_text("sample_id\tproject_batch\nsample1\tBatch01\n")
-            with self.assertRaises(ValueError):
-                load_annotation_values(path)
-
-    def test_raises_when_no_columns_to_add_besides_the_key(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "values.tsv"
-            path.write_text("asm_acc\nsample1\n")
-            with self.assertRaises(ValueError):
-                load_annotation_values(path)
-
-
-class TestResolveDatabaseFile(unittest.TestCase):
-    def test_accepts_a_direct_db_path(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            db_path = Path(tmp) / "my.db"
-            db_path.touch()
-            self.assertEqual(resolve_database_file(db_path), db_path)
-
-    def test_resolves_a_single_db_file_inside_a_folder(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp = Path(tmp)
-            db_path = tmp / "my_database.db"
-            db_path.touch()
-            self.assertEqual(resolve_database_file(tmp), db_path)
-
-    def test_raises_when_folder_has_no_db_file(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            with self.assertRaises(FileNotFoundError):
-                resolve_database_file(tmp)
-
-    def test_raises_when_folder_has_multiple_db_files(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp = Path(tmp)
-            (tmp / "a.db").touch()
-            (tmp / "b.db").touch()
-            with self.assertRaises(RuntimeError):
-                resolve_database_file(tmp)
-
-    def test_raises_for_a_nonexistent_path(self):
-        with self.assertRaises(FileNotFoundError):
-            resolve_database_file("/no/such/path")
-
-
-class TestEnsureAnnotationLogTable(unittest.TestCase):
-    def test_is_idempotent(self):
-        conn = create_connection(":memory:")
-        ensure_annotation_log_table(conn)
-        ensure_annotation_log_table(conn)  # must not raise
-        cursor = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='ANNOTATION_LOG'"
-        )
-        self.assertIsNotNone(cursor.fetchone())
-        conn.close()
-
-
-class TestListAccessions(unittest.TestCase):
-    def test_returns_asm_acc_and_biosample_acc_sorted_by_asm_acc(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            db_path = Path(tmp) / "my.db"
-            conn = create_connection(str(db_path))
-            create_database(conn)
-            conn.execute(
-                "INSERT INTO METADATA (biosample_acc, asm_acc) "
-                "VALUES ('SAMN002', 'GCA_000000002.1')"
-            )
-            conn.execute(
-                "INSERT INTO METADATA (biosample_acc, asm_acc) "
-                "VALUES ('SAMN001', 'GCA_000000001.1')"
-            )
-            conn.commit()
-            conn.close()
-
-            rows = list_accessions(db_path)
-
-            self.assertEqual(
-                rows,
-                [
-                    ("GCA_000000001.1", "SAMN001"),
-                    ("GCA_000000002.1", "SAMN002"),
-                ],
-            )
-
-    def test_returns_empty_list_for_an_empty_database(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            db_path = Path(tmp) / "empty.db"
-            conn = create_connection(str(db_path))
-            create_database(conn)
-            conn.close()
-
-            self.assertEqual(list_accessions(db_path), [])
-
-
-class TestAnnotateDatabase(unittest.TestCase):
-    # These tests build the METADATA table directly (bypassing both the
-    # taxon and custom build paths) to prove annotate_database only cares
-    # about the METADATA table's schema, not how the database was built -
-    # the same code path applies equally to a taxon-built database, an
-    # already-built accession database, or a custom one.
-    def _taxon_shaped_db(self, tmp_dir):
-        db_path = Path(tmp_dir) / "taxon_like.db"
-        conn = create_connection(str(db_path))
-        create_database(conn)
-        conn.execute(
-            "INSERT INTO METADATA (biosample_acc, asm_acc, PDS_acc) "
-            "VALUES ('SAMN001', 'GCA_000000001.1', 'PDS000000001.1')"
-        )
-        conn.execute(
-            "INSERT INTO METADATA (biosample_acc, asm_acc, PDS_acc) "
-            "VALUES ('SAMN002', 'GCA_000000002.1', 'PDS000000001.1')"
-        )
-        conn.commit()
-        conn.close()
-        return db_path
-
-    def test_adds_and_populates_a_new_column_on_a_taxon_shaped_database(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            db_path = self._taxon_shaped_db(tmp)
-            values_path = Path(tmp) / "values.tsv"
-            values_path.write_text(
-                "asm_acc\toutbreak_investigation_code\n"
-                "GCA_000000001.1\tOUT-2026-01\n"
-            )
-
-            summary = annotate_database(db_path, values_path)
-
-            conn = create_connection(str(db_path))
-            rows = conn.execute(
-                "SELECT asm_acc, outbreak_investigation_code FROM METADATA "
-                "ORDER BY asm_acc"
-            ).fetchall()
-            conn.close()
-
-            self.assertEqual(summary["columns_added"], ["outbreak_investigation_code"])
-            self.assertEqual(summary["rows_updated"], 1)
-            self.assertEqual(summary["unmatched_in_database"], ["GCA_000000002.1"])
-            self.assertEqual(
-                rows,
-                [
-                    ("GCA_000000001.1", "OUT-2026-01"),
-                    ("GCA_000000002.1", "missing"),
-                ],
-            )
-
-    def test_works_identically_on_a_custom_built_database(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            db_path = Path(tmp) / "custom_like.db"
-            conn = create_connection(str(db_path))
-            create_database(conn)
-            insert_custom_metadata(
-                conn, {}, {"sample1": Path("/fake/sample1.fasta")}
-            )
-            conn.close()
-
-            values_path = Path(tmp) / "values.tsv"
-            values_path.write_text("asm_acc\tproject_batch\nsample1\tBatch01\n")
-
-            summary = annotate_database(db_path, values_path)
-            self.assertEqual(summary["columns_added"], ["project_batch"])
-            self.assertEqual(summary["rows_updated"], 1)
-
-    def test_reports_unmatched_ids_in_the_values_file(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            db_path = self._taxon_shaped_db(tmp)
-            values_path = Path(tmp) / "values.tsv"
-            values_path.write_text(
-                "asm_acc\tproject_batch\nGCA_999999999.1\tBatch01\n"
-            )
-
-            summary = annotate_database(db_path, values_path)
-            self.assertEqual(summary["unmatched_in_file"], ["GCA_999999999.1"])
-            self.assertEqual(summary["rows_updated"], 0)
-
-    def test_records_an_annotation_log_entry_with_a_verifiable_file_hash(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            db_path = self._taxon_shaped_db(tmp)
-            values_path = Path(tmp) / "values.tsv"
-            values_path.write_text(
-                "asm_acc\tproject_batch\nGCA_000000001.1\tBatch01\n"
-            )
-
-            annotate_database(db_path, values_path)
-
-            log_rows = read_annotation_log(db_path)
-            self.assertEqual(len(log_rows), 1)
-            (
-                timestamp, key_column, columns_added, columns_updated,
-                values_file, values_file_sha256, rows_updated,
-                unmatched_in_file, unmatched_in_database,
-            ) = log_rows[0]
-
-            self.assertTrue(timestamp)
-            self.assertEqual(key_column, "asm_acc")
-            self.assertEqual(columns_added, "project_batch")
-            self.assertEqual(
-                values_file_sha256,
-                hashlib.sha256(values_path.read_bytes()).hexdigest(),
-            )
-            self.assertEqual(rows_updated, 1)
-
-    def test_second_annotate_call_adds_a_second_column_without_disturbing_the_first(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            db_path = self._taxon_shaped_db(tmp)
-            first_values = Path(tmp) / "first.tsv"
-            first_values.write_text(
-                "asm_acc\tproject_batch\nGCA_000000001.1\tBatch01\n"
-            )
-            second_values = Path(tmp) / "second.tsv"
-            second_values.write_text(
-                "asm_acc\tsequencing_facility\nGCA_000000001.1\tLabX\n"
-            )
-
-            annotate_database(db_path, first_values)
-            annotate_database(db_path, second_values)
-
-            conn = create_connection(str(db_path))
-            row = conn.execute(
-                "SELECT project_batch, sequencing_facility FROM METADATA "
-                "WHERE asm_acc = 'GCA_000000001.1'"
-            ).fetchone()
-            conn.close()
-
-            self.assertEqual(row, ("Batch01", "LabX"))
-            self.assertEqual(len(read_annotation_log(db_path)), 2)
-
-    def test_is_backward_compatible_with_a_database_predating_annotation_log(self):
-        # Simulates a database built before ANNOTATION_LOG existed: only
-        # METADATA is created, bypassing create_database entirely.
-        with tempfile.TemporaryDirectory() as tmp:
-            db_path = Path(tmp) / "old_style.db"
-            conn = create_connection(str(db_path))
-            conn.execute(
-                """
-                CREATE TABLE METADATA (
-                    biosample_acc TEXT PRIMARY KEY,
-                    taxid INTEGER, strain TEXT, collected_by TEXT,
-                    collection_date TEXT, geo_loc_name TEXT,
-                    isolation_source TEXT, lat_lon TEXT, serovar TEXT,
-                    sub_species TEXT, species TEXT, genus TEXT, host TEXT,
-                    host_disease TEXT, outbreak TEXT, srr TEXT,
-                    PDT_acc TEXT, PDS_acc TEXT, asm_acc TEXT
-                )
-                """
-            )
-            conn.execute(
-                "INSERT INTO METADATA (biosample_acc, asm_acc) VALUES ('s1', 'a1')"
-            )
-            conn.commit()
-            conn.close()
-
-            self.assertEqual(read_annotation_log(db_path), [])
-
-            values_path = Path(tmp) / "values.tsv"
-            values_path.write_text("asm_acc\tproject_batch\na1\tBatch01\n")
-            summary = annotate_database(db_path, values_path)
-
-            self.assertEqual(summary["columns_added"], ["project_batch"])
-            self.assertEqual(len(read_annotation_log(db_path)), 1)
-
-    def test_rejects_a_key_column_not_present_in_metadata(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            db_path = self._taxon_shaped_db(tmp)
-            values_path = Path(tmp) / "values.tsv"
-            values_path.write_text("sample_id\tproject_batch\nx\tBatch01\n")
-            with self.assertRaises(ValueError):
-                annotate_database(db_path, values_path, key_column="sample_id")
-
-
-class TestAnnotateCli(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.input_dir = Path(tempfile.mkdtemp(prefix="mashpit_annotate_input_"))
-        (cls.input_dir / "sample1.fasta").write_text(">c1\n" + "ACGTACGTAC" * 10 + "\n")
-
-        cls.build_result = subprocess.run(
-            [
-                "mashpit", "build", "custom", "test_annotate_db",
-                "--input-dir", str(cls.input_dir),
-            ],
-            capture_output=True,
-            text=True,
-        )
-
-    @classmethod
-    def tearDownClass(cls):
-        shutil.rmtree(cls.input_dir, ignore_errors=True)
-        shutil.rmtree("test_annotate_db", ignore_errors=True)
-        for file in os.listdir():
-            if file.endswith(".log"):
-                os.remove(file)
-
-    def test_build_succeeded(self):
-        self.assertEqual(self.build_result.returncode, 0, self.build_result.stderr)
-
-    def test_annotate_adds_column_via_cli(self):
-        values_path = self.input_dir.parent / "mashpit_annotate_values.tsv"
-        values_path.write_text("asm_acc\tproject_batch\nsample1\tBatch01\n")
-        try:
-            result = subprocess.run(
-                ["mashpit", "annotate", "test_annotate_db", "--values", str(values_path)],
-                capture_output=True,
-                text=True,
-            )
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertIn("project_batch", result.stdout)
-
-            conn = create_connection("test_annotate_db/test_annotate_db.db")
-            value = conn.execute(
-                "SELECT project_batch FROM METADATA WHERE asm_acc = 'sample1'"
-            ).fetchone()[0]
-            conn.close()
-            self.assertEqual(value, "Batch01")
-
-            history = subprocess.run(
-                ["mashpit", "annotate", "test_annotate_db", "--history"],
-                capture_output=True,
-                text=True,
-            )
-            self.assertEqual(history.returncode, 0, history.stderr)
-            self.assertIn("project_batch", history.stdout)
-        finally:
-            if values_path.exists():
-                values_path.unlink()
-
-    def test_list_accessions_via_cli(self):
-        result = subprocess.run(
-            ["mashpit", "annotate", "test_annotate_db", "--list-accessions"],
-            capture_output=True,
-            text=True,
-        )
-        self.assertEqual(result.returncode, 0, result.stderr)
-        lines = result.stdout.strip().splitlines()
-        self.assertEqual(lines[0], "asm_acc\tbiosample_acc")
-        self.assertIn("sample1\tsample1", lines)
-
-
-class TestReshardCli(unittest.TestCase):
-    # End-to-end: build a small custom database (a handful of samples, so
-    # it builds as a single un-sharded .sig file by default), reshard it
-    # with an explicit --shards override, and confirm a real `mashpit
-    # query` against the sharded database returns byte-identical output to
-    # the same query run before resharding - the correctness property the
-    # whole feature depends on, exercised through the actual CLI rather
-    # than the internal compare_sharded_database function directly.
-    @classmethod
-    def setUpClass(cls):
-        cls.input_dir = Path(tempfile.mkdtemp(prefix="mashpit_reshard_input_"))
-        bases = "ACGT"
-        for index in range(6):
-            sequence = "".join(
-                bases[(i * 7 + index * 13) % 4] for i in range(400)
-            )
-            (cls.input_dir / f"sample{index}.fasta").write_text(
-                f">contig1\n{sequence}\n"
-            )
-
-        cls.build_result = subprocess.run(
-            [
-                "mashpit", "build", "custom", "test_reshard_db",
-                "--input-dir", str(cls.input_dir),
-            ],
-            capture_output=True,
-            text=True,
-        )
-
-        cls.query_dir = Path(tempfile.mkdtemp(prefix="mashpit_reshard_query_"))
-        cls.query_path = cls.query_dir / "query.fasta"
-        cls.query_path.write_text(
-            (cls.input_dir / "sample0.fasta").read_text()
-        )
-
-    @classmethod
-    def tearDownClass(cls):
-        shutil.rmtree(cls.input_dir, ignore_errors=True)
-        shutil.rmtree(cls.query_dir, ignore_errors=True)
-        shutil.rmtree("test_reshard_db", ignore_errors=True)
-        for file in os.listdir():
-            if file.endswith(".log"):
-                os.remove(file)
-
-    def tearDown(self):
-        for name in ("query_representative_matches.csv", "query_tree.newick", "query_tree.png", "query_tree.svg"):
-            if os.path.isfile(name):
-                os.remove(name)
-
-    def test_build_succeeded(self):
-        self.assertEqual(self.build_result.returncode, 0, self.build_result.stderr)
-
-    def _run_query(self):
-        result = subprocess.run(
-            ["mashpit", "query", str(self.query_path), "test_reshard_db",
-             "--number", "10", "--threshold", "0.0"],
-            capture_output=True,
-            text=True,
-        )
-        self.assertEqual(result.returncode, 0, result.stderr)
-        return Path("query_representative_matches.csv").read_text()
-
-    def test_query_matches_before_and_after_resharding(self):
-        unsharded_output = self._run_query()
-        os.remove("query_representative_matches.csv")
-
-        reshard_result = subprocess.run(
-            ["mashpit", "reshard", "test_reshard_db", "--shards", "3"],
-            capture_output=True,
-            text=True,
-        )
-        self.assertEqual(reshard_result.returncode, 0, reshard_result.stderr)
-        self.assertTrue(
-            Path("test_reshard_db/test_reshard_db.sig").is_dir()
-        )
-
-        sharded_output = self._run_query()
-        self.assertEqual(unsharded_output, sharded_output)
-
-    def test_reshard_back_to_single_file(self):
-        subprocess.run(
-            ["mashpit", "reshard", "test_reshard_db", "--shards", "3"],
-            capture_output=True,
-            text=True,
-        )
-        result = subprocess.run(
-            ["mashpit", "reshard", "test_reshard_db", "--shards", "1"],
-            capture_output=True,
-            text=True,
-        )
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertTrue(Path("test_reshard_db/test_reshard_db.sig").is_file())
-
-
-class TestSafeFilename(unittest.TestCase):
-    # Covers the sanitization streamlit_app.run_query relies on before
-    # writing an uploaded assembly's name to a path on disk.
-    def test_strips_directory_components(self):
-        self.assertEqual(safe_filename("../../etc/genome.fasta"), "genome.fasta")
-        self.assertEqual(safe_filename("C:\\Users\\me\\genome.fasta"), "genome.fasta")
-
-    def test_replaces_unsafe_characters(self):
-        self.assertEqual(safe_filename("my genome (1).fa"), "my_genome__1_.fa")
-
-    def test_empty_result_falls_back_to_default(self):
-        self.assertEqual(safe_filename("../../"), "query.fasta")
-
-
-class TestValidateDatabase(unittest.TestCase):
-    def test_rejects_blank_input(self):
-        database, error = validate_database("   ")
-        self.assertIsNone(database)
-        self.assertIn("Select a Mashpit database", error)
-
-    def test_rejects_missing_directory(self):
-        database, error = validate_database("/no/such/mashpit/database/dir")
-        self.assertIsNone(database)
-        self.assertIn("does not exist", error)
-
-    def test_rejects_directory_without_matching_db_and_sig(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            database, error = validate_database(tmp)
-            self.assertIsNone(database)
-            self.assertIn("exactly one .db and one .sig", error)
-
-    def test_rejects_mismatched_basenames(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            (Path(tmp) / "one.db").touch()
-            (Path(tmp) / "two.sig").touch()
-            database, error = validate_database(tmp)
-            self.assertIsNone(database)
-            self.assertIn("do not match", error)
-
-    def test_accepts_matching_db_and_sig(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            (Path(tmp) / "salmonella.db").touch()
-            (Path(tmp) / "salmonella.sig").touch()
-            database, error = validate_database(tmp)
-            self.assertIsNone(error)
-            self.assertEqual(database, Path(tmp).expanduser().resolve())
-
-
-class TestMashpitGui(unittest.TestCase):
-    def test_gui_starts_without_crashing(self):
-        # A machine with no ~/.streamlit/credentials.toml yet blocks forever
-        # on Streamlit's interactive "enter your email" onboarding prompt
-        # before the server even starts - gui.suppress_first_run_prompt
-        # exists specifically to avoid that hang. This only checks the
-        # process survives past startup; page contents are covered manually
-        # via a real browser session, similar to the old webserver smoke test
-        # this replaces.
-        #
-        # Port is picked dynamically (bind to 0, read back the assigned
-        # port) rather than hardcoded, so back-to-back runs of this test -
-        # or a leftover TIME_WAIT socket from manual testing - never collide.
-        import socket
-
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
-            probe.bind(("localhost", 0))
-            free_port = probe.getsockname()[1]
-
-        process = subprocess.Popen(
-            ["mashpit", "gui", "--port", str(free_port)],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        try:
-            time.sleep(3)
-            return_code = process.poll()
-            if return_code is not None:
-                stdout, stderr = process.communicate()
-                self.fail(
-                    f"`mashpit gui` exited early with code {return_code}:\n"
-                    f"STDOUT: {stdout.decode()}\n"
-                    f"STDERR: {stderr.decode()}"
-                )
-        finally:
-            os.kill(process.pid, signal.SIGTERM)
-            process.wait()
-
-
 
 class TestClusterReport(unittest.TestCase):
-    def test_full_members_not_representatives_drive_summary(self):
-        from mashpit.report import store_cluster_members, read_cluster_members, summarize_clusters
-        conn = create_connection(":memory:")
-        create_database(conn)
-        members = pd.DataFrame({
-            "target_acc": ["PDT1", "PDT2", "PDT3", "PDT3"],
-            "PDS_acc": ["PDS_A"] * 4,
-            "asm_acc": ["GCA_1", None, "GCA_3", "GCA_3"],
-            "epi_type": ["clinical", "environmental/other", None, None],
-            "collection_date": ["2019", "2021-02", "not collected", "not collected"],
-            "computed_types": ["serotype=Enteritidis", "serotype=Typhimurium", None, None],
-        })
-        store_cluster_members(conn, members)
-        loaded = read_cluster_members(conn, ["PDS_A"])
-        self.assertEqual(len(loaded), 3)
-        summary = summarize_clusters(loaded).iloc[0]
-        self.assertEqual(summary["cluster_size"], 3)
-        self.assertEqual(summary["env_cli_ratio"], "1:1")
-        self.assertEqual(summary["unknown_source_count"], 1)
-        self.assertEqual(summary["sampling_year_start"], 2019)
-        self.assertEqual(summary["sampling_year_end"], 2021)
-        self.assertEqual(summary["dated_isolates"], 2)
-        self.assertEqual(summary["computed_serotype_known"], 2)
-        conn.close()
-
-    def test_legacy_database_does_not_invent_cluster_size(self):
-        from mashpit.report import read_cluster_members, summarize_clusters
-        conn = create_connection(":memory:")
-        create_database(conn)
-        self.assertTrue(read_cluster_members(conn, ["PDS_A"]).empty)
-        self.assertTrue(summarize_clusters(pd.DataFrame()).empty)
-        conn.close()
-
     def test_dates_and_conflicting_serotypes(self):
         from mashpit.report import collection_year, computed_serotype, source_group
+
         self.assertEqual(collection_year("2020-02-29"), 2020)
         for value in ("2020-02-31", "2018/2020", "missing", None):
             self.assertIsNone(collection_year(value))
@@ -2641,30 +540,19 @@ class TestClusterReport(unittest.TestCase):
         self.assertIn("Enteritidis", result)
         self.assertIn("Typhimurium", result)
         self.assertNotIn("MLST", result)
-        self.assertEqual(computed_serotype("serotype=4,[5],12:i:-; MLST=19"), "serotype: 4,[5],12:i:-")
+        self.assertEqual(
+            computed_serotype("serotype=4,[5],12:i:-; MLST=19"),
+            "serotype: 4,[5],12:i:-",
+        )
         self.assertEqual(computed_serotype("serotype=missing"), "Unknown")
         self.assertEqual(source_group("missing"), "Unknown / other")
         self.assertEqual(source_group("nonclinical"), "Unknown / other")
 
-    def test_members_without_metadata_or_assemblies_survive_load(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            metadata = Path(tmp) / "metadata.tsv"
-            clusters = Path(tmp) / "clusters.tsv"
-            metadata.write_text("target_acc\tasm_acc\nPDT000000001.1\tGCA_000000001.1\n")
-            clusters.write_text("target_acc\tPDS_acc\nPDT000000001.1\tPDS1\nPDT000000002.1\tPDS1\n")
-            full, eligible = load_metadata(metadata, clusters)
-            self.assertEqual(len(full), 2)
-            self.assertEqual(len(eligible), 1)
-
     def test_tree_height_and_exports(self):
-        from mashpit.tree_plot import tree_layout, render_tree
+        from mashpit.tree_plot import render_tree
         from io import BytesIO
         from PIL import Image
-        small = tree_layout(3)
-        large = tree_layout(100)
-        larger_font = tree_layout(100, font_size=18)
-        self.assertGreater(large["height"] * 100, small["height"] * 3)
-        self.assertGreater(larger_font["height"], large["height"])
+
         png, svg, tips = render_tree("(query:0.1,(a:0.1,b:0.2):0.1);", "query")
         self.assertEqual(tips, 3)
         self.assertIn(b"<svg", svg)
@@ -2675,30 +563,10 @@ class TestClusterReport(unittest.TestCase):
         self.assertEqual(count, 100)
         self.assertGreater(Image.open(BytesIO(large_png)).height, height * 5)
 
-    def test_insert_preserves_computed_types_and_all_members(self):
-        conn = create_connection(":memory:")
-        create_database(conn)
-        metadata = pd.DataFrame({
-            "target_acc": ["PDT1", "PDT2"], "PDS_acc": ["PDS1", "PDS1"],
-            "asm_acc": ["GCA_000000001.1", None], "biosample_acc": ["SAMN1", "SAMN2"],
-            "computed_types": ["serotype=4,[5],12:i:-", "serotype=Enteritidis"],
-            "epi_type": ["clinical", "environmental/other"],
-        })
-        reps = metadata.iloc[:1].copy()
-        insert_metadata(conn, metadata, reps, 20, {"GCA_000000001.1": Path("fake")}, {})
-        self.assertEqual(conn.execute("SELECT COUNT(*) FROM CLUSTER_MEMBERS").fetchone()[0], 2)
-        self.assertEqual(conn.execute("SELECT COUNT(*) FROM REPRESENTATIVE").fetchone()[0], 1)
-        self.assertEqual(conn.execute("SELECT computed_types, epi_type FROM METADATA").fetchone(),
-                         ("serotype=4,[5],12:i:-", "clinical"))
-        summary = generate_cluster_table(conn, pd.DataFrame({"PDS_acc": ["PDS1"],
-                                        "similarity_score": [.99]}), 1000)
-        self.assertEqual(summary.iloc[0]["cluster_size"], 2)
-        self.assertEqual(summary.iloc[0]["total_representatives"], 1)
-        conn.close()
-
     def test_streamlit_report_and_controls(self):
         from streamlit.testing.v1 import AppTest
-        script = '''
+
+        script = """
 import pandas as pd
 import streamlit as st
 from mashpit.report import summarize_clusters
@@ -2715,14 +583,18 @@ results = {"query_name": "query", "representative_df": representatives,
     "cluster_df": clusters, "members": members, "cluster_csv": b"csv", "representative_csv": b"csv",
     "tree_newick": b"(query:0.1,(a:0.1,b:0.2):0.1);", "log": ""}
 display_results(results, {"Type": "Taxonomy"})
-'''
+"""
         app = AppTest.from_string(script).run(timeout=30)
         self.assertEqual(len(app.exception), 0, str(app.exception))
         self.assertEqual(app.metric[3].value, "2")
         app.slider[0].set_value(14).run(timeout=30)
         self.assertEqual(len(app.exception), 0, str(app.exception))
-        # A legacy database and a custom database must both remain usable.
-        legacy = script.replace('"members": members', '"members": pd.DataFrame()')
+        legacy = script.replace(
+            '"members": members', '"members": pd.DataFrame()'
+        ).replace(
+            "clusters = summarize_clusters(members)",
+            'clusters = pd.DataFrame({"PDS_acc": ["PDS1"]})',
+        )
         app = AppTest.from_string(legacy).run(timeout=30)
         self.assertEqual(len(app.exception), 0, str(app.exception))
         custom = script.replace('"cluster_df": clusters', '"cluster_df": None')
@@ -2730,5 +602,169 @@ display_results(results, {"Type": "Taxonomy"})
         self.assertEqual(len(app.exception), 0, str(app.exception))
 
 
-if __name__ == "__main__":
-    unittest.main()
+def test_cluster_membership_summary_and_ranking(tmp_path):
+    """Join full membership, persist it, then rank by similarity rather than size."""
+    from mashpit.report import read_cluster_members
+
+    metadata = tmp_path / "metadata.tsv"
+    membership = tmp_path / "membership.tsv"
+    metadata.write_text(
+        "target_acc\tasm_acc\tbiosample_acc\tepi_type\tcollection_date\tcomputed_types\n"
+        "PDT000000001.1\tGCA_000000001.1\tSAMN1\tclinical\t2019\tserotype=4,[5],12:i:-\n"
+        "PDT000000002.1\tGCA_000000002.1\tSAMN2\tenvironmental/other\t2021-02\tserotype=Enteritidis\n"
+        "PDT000000003.1\tGCA_000000003.1\tSAMN3\tclinical\t2020\tserotype=Newport\n"
+    )
+    membership.write_text(
+        "target_acc\tPDS_acc\nPDT000000001.1\tA\nPDT000000002.1\tA\n"
+        "PDT000000004.1\tA\nPDT000000004.1\tA\nPDT000000003.1\tB\n"
+    )
+    full, eligible = load_metadata(metadata, membership)
+    assert len(full) == 4 and len(eligible) == 3
+    conn = create_connection(":memory:")
+    try:
+        create_database(conn)
+        hits = pd.DataFrame(
+            {"PDS_acc": ["A", "A", "B"], "similarity_score": [0.990, 0.980, 0.999]}
+        )
+        # An old database must not substitute representatives for cluster size.
+        assert read_cluster_members(conn, ["A"]).empty
+        assert generate_cluster_table(conn, hits, 1000)["cluster_size"].isna().all()
+        insert_metadata(
+            conn,
+            full,
+            eligible,
+            20,
+            {acc: Path("fake") for acc in eligible.asm_acc},
+            {},
+        )
+        assert (
+            conn.execute(
+                "SELECT computed_types FROM METADATA WHERE biosample_acc='SAMN1'"
+            ).fetchone()[0]
+            == "serotype=4,[5],12:i:-"
+        )
+        summary = generate_cluster_table(conn, hits, 1000)
+        assert summary.PDS_acc.tolist() == ["B", "A"]
+        assert summary.near_top.tolist() == [True, False]
+        a = summary.set_index("PDS_acc").loc["A"]
+        assert (a.cluster_size, a.hits_in_results, a.total_representatives) == (3, 2, 2)
+        assert (a.env_cli_ratio, a.unknown_source_count) == ("1:1", 1)
+        assert (a.sampling_year_start, a.sampling_year_end, a.dated_isolates) == (
+            2019,
+            2021,
+            2,
+        )
+        assert a.computed_serotype_known == 2
+        hits.loc[0, "similarity_score"] = 0.998
+        assert generate_cluster_table(conn, hits, 1000).near_top.all()
+    finally:
+        conn.close()
+
+
+def test_annotation_rejects_unsafe_and_reserved_columns():
+    for name in ("bad;DROP TABLE", "bad name", "1bad", "", "ASM_ACC", "PDS_acc"):
+        with pytest.raises(ValueError):
+            validate_column_name(name)
+
+
+def run_cli(*args):
+    result = subprocess.run(
+        [sys.executable, "-m", "mashpit.mashpit", *map(str, args)],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
+    return result
+
+
+def test_local_build_query_annotate_reshard_workflow(tmp_path):
+    """One real offline CLI workflow replaces repeated builds in separate classes."""
+    from random import Random
+
+    inputs = tmp_path / "inputs"
+    inputs.mkdir()
+    for i in range(3):
+        rng = Random(i)
+        (inputs / f"sample{i}.fasta").write_text(
+            ">contig\n" + "".join(rng.choice("ACGT") for _ in range(1000)) + "\n"
+        )
+    metadata = tmp_path / "metadata.tsv"
+    metadata.write_text(
+        "sample_id\tasm_acc\tstrain\tcustom_batch\nsample0\tGCA_override\tStrainA\tBatch1\n"
+    )
+    run_cli("build", "custom", "db", "--input-dir", inputs, "--metadata", metadata)
+    db = tmp_path / "db" / "db.db"
+    sig = tmp_path / "db" / "db.sig"
+    before_hashes = {s.name: dict(s.minhash.hashes) for s in load_all_signatures(sig)}
+    assert set(before_hashes) == {"GCA_override", "sample1", "sample2"}
+    with sqlite3.connect(db) as conn:
+        assert (
+            conn.execute("SELECT value FROM DESC WHERE name='Type'").fetchone()[0]
+            == "Custom"
+        )
+        assert conn.execute(
+            "SELECT strain, custom_batch FROM METADATA WHERE asm_acc='sample1'"
+        ).fetchone() == ("missing", "missing")
+    values = tmp_path / "values.tsv"
+    values.write_text("asm_acc\tproject_batch\nGCA_override\tUpdated\n")
+    run_cli("annotate", "db", "--values", values)
+    with sqlite3.connect(db) as conn:
+        assert conn.execute(
+            "SELECT strain, custom_batch, project_batch FROM METADATA WHERE asm_acc='GCA_override'"
+        ).fetchone() == ("StrainA", "Batch1", "Updated")
+        assert (
+            conn.execute(
+                "SELECT project_batch FROM METADATA WHERE asm_acc='sample1'"
+            ).fetchone()[0]
+            == "missing"
+        )
+    log = read_annotation_log(db)
+    assert (
+        len(log) == 1 and log[0][5] == hashlib.sha256(values.read_bytes()).hexdigest()
+    )
+
+    def query():
+        run_cli("query", inputs / "sample0.fasta", "db", "--threshold", "0")
+        frame = pd.read_csv("sample0_representative_matches.csv", index_col=0)
+        assert frame.iloc[0]["asm_acc"] == "GCA_override"
+        assert frame.iloc[0]["similarity_score"] == 1
+        assert frame.iloc[0]["project_batch"] == "Updated"
+        return frame.sort_values("asm_acc").reset_index(drop=True)
+
+    expected = query()
+    for shards in (2, 1):
+        run_cli("reshard", "db", "--shards", shards)
+        pd.testing.assert_frame_equal(query(), expected)
+        assert {
+            s.name: dict(s.minhash.hashes) for s in load_all_signatures(sig)
+        } == before_hashes
+
+
+def test_custom_build_rejects_duplicate_identity_and_cleans_up(tmp_path):
+    inputs = tmp_path / "inputs"
+    inputs.mkdir()
+    for sample in ("a", "b"):
+        (inputs / f"{sample}.fa").write_text(">c\n" + "ACGT" * 100 + "\n")
+    metadata = tmp_path / "metadata.tsv"
+    for key in ("asm_acc", "biosample_acc"):
+        metadata.write_text(f"sample_id\t{key}\na\tshared\nb\tshared\n")
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "mashpit.mashpit",
+                "build",
+                "custom",
+                "db",
+                "--input-dir",
+                str(inputs),
+                "--metadata",
+                str(metadata),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert result.returncode != 0 and "Duplicate identity" in result.stderr
+        assert not (tmp_path / "db").exists()

@@ -30,14 +30,6 @@ jobs:
           python-version: "3.10"
           cache: 'pip'
 
-      - name: Download and set up ncbi datasets client
-        run: |
-          curl -o datasets 'https://ftp.ncbi.nlm.nih.gov/pub/datasets/command-line/v2/linux-amd64/datasets'
-          chmod +x datasets
-          mkdir -p $HOME/.local/bin
-          mv datasets $HOME/.local/bin
-          echo "$HOME/.local/bin" >> $GITHUB_PATH
-
       - name: Install HDF5
         run: sudo apt-get update && sudo apt-get install -y libhdf5-dev
 
