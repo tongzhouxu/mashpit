@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Constrain PyArrow to versions below 26 for compatibility with Mashpit's NumPy 1.24 dependency, fixing Streamlit report failures on fresh Python 3.11 installations.
 - Add `mashpit query --no-tree` and the equivalent Streamlit setting. Search scores, ranks, ties, candidate counts, and cluster summaries are unchanged.
 - Write required search CSVs before optional tree retrieval, pairwise distances, construction, and rendering. Optional exceptions now warn and preserve a successful query exit; required search/output failures remain fatal.
 - Add `<query>_tree_status.json` with `generated`, `disabled`, `skipped_insufficient_hits`, `construction_failed`, and `rendering_failed` states, reasons, exception types, and valid artifact filenames. Retain Newick after rendering failure and remove partial/stale images; publish tree artifacts atomically.
