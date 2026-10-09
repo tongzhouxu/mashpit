@@ -258,6 +258,7 @@ Common query options include:
 --number                 maximum number of database matches returned
 --threshold              minimum similarity used when constructing the local result tree
 --annotation             metadata field used to annotate tree tips
+--no-tree                skip all optional tree work; keep identical search tables
 --tie-tolerance-hashes   sketch-hash tolerance used to flag near-top SNP clusters (taxon databases only)
 --threads                worker processes for a sharded database (default: all available cores)
 ```
@@ -287,9 +288,35 @@ A query produces:
 
    Newick and image files (`<query>_tree.newick`, `<query>_tree.png`, `<query>_tree.svg`) showing the query genome together with its closest database representatives above the similarity threshold. The tree is skipped (with a log message) when the top hit falls below `--threshold` or fewer than two candidates qualify.
 
-4. **Log file**
+4. **Tree status**
+
+   `<query>_tree_status.json` is written after both required search tables (where applicable) succeed, even when the tree is disabled or unavailable. Its `schema_version` is `1`; `search_complete` is `true`. The `status` field is one of:
+
+   | Status | Meaning |
+   | --- | --- |
+   | `generated` | Newick, PNG, and SVG were successfully written. |
+   | `disabled` | The user supplied `--no-tree`. |
+   | `skipped_insufficient_hits` | Fewer than two representatives qualify, including when the top hit is below the threshold. |
+   | `construction_failed` | Tree-specific signature retrieval, pairwise distances, construction, annotation, or Newick writing failed. |
+   | `rendering_failed` | Newick was saved, but rendering or image writing failed. |
+
+   `reason` explains a skip/failure, and `error_type` identifies the exception for failures. `newick`, `png`, and `svg` contain filenames for successfully written outputs, otherwise `null`. A rendering failure retains valid Newick and removes partial PNG/SVG files. Previous tree artifacts with the same query prefix are removed before the optional workflow. Files that cannot be removed are listed in `cleanup_errors`; use the status fields rather than file existence to decide which artifacts are valid.
+
+5. **Log file**
 
    A timestamped record of the query parameters and processing steps.
+
+A zero process exit code means the required search outputs succeeded; it does **not** promise a tree. Check the exit code first, then read the tree status to decide whether to display images, offer Newick alone, or show the reason. Database loading, sketching, similarity calculation, and required CSV-writing failures remain nonzero exits, even if an earlier CSV already exists. Use a fresh output directory for each query to avoid confusing earlier outputs with a failed run. If filesystem errors prevent writing the status JSON itself, Mashpit warns in the log and keeps the successful search outputs; callers must treat missing status as unavailable tree information.
+
+For search-only use:
+
+```bash
+mashpit query sample.fasta path/to/database --no-tree
+```
+
+This skips tree-specific signature retrieval, candidate-to-candidate distances, neighbor joining, annotation, and rendering. Query-to-database comparison still runs normally. Similarity scores, ranking, tie flags, returned candidate counts, and cluster tables are identical with or without the option. The default still attempts to generate a tree.
+
+Tree rendering and annotation use iterative traversal and serialization, avoiding TreeViz's recursive copying and BioPython's recursive traversal/writer helpers. No recursion-limit increase is used. Large trees can still exhaust memory or fail in a dependency; those optional failures are recorded without invalidating search results. Zero-distance trees use unit edges only in the display, with a caption; their Newick distances are preserved.
 
 Mashpit results are intended for rapid screening and prioritization. They do not replace validated SNP-pipeline, cgMLST, or whole-genome phylogenetic analyses when formal outbreak confirmation is required.
 
@@ -312,6 +339,8 @@ Use `--port` to run on a different port:
 ```bash
 mashpit gui --port 8888
 ```
+
+The interface includes a **Skip tree generation** setting and a downloadable tree-status JSON. Tree and preview errors leave the search tables accessible, including a Newick download when rendering failed.
 
 The interface lets users select a local database, upload a query assembly, run the search, and inspect the result table and tree - all without the genome or results leaving the local machine.
 

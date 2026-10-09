@@ -27,7 +27,7 @@ dependencies = [
     "biopython ~= 1.83",
     "scikit-bio ~= 0.6.2",
     "tqdm ~= 4.67.0",
-    "phytreeviz ~= 0.2.0",
+    "matplotlib ~= 3.7.5",
     "streamlit ~= 1.40.1"
 ]
 

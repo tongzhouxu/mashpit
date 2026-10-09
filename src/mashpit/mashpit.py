@@ -213,6 +213,10 @@ def commandToArgs(commandline):
             "databases"
         ),
     )
+    subparser_query.add_argument(
+        "--no-tree", action="store_true",
+        help="skip tree-specific signature retrieval, pairwise distances, construction and rendering; search tables are unchanged",
+    )
     subparser_query.set_defaults(func=query.query)
 
     # GUI arguments

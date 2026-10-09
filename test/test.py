@@ -270,18 +270,13 @@ class TestGenerateMashtree(unittest.TestCase):
                 "isolation_source": ["water", "soil", "clinical", "food"],
             }
         )
-        generate_mashtree(
+        newick_text = generate_mashtree(
             output_df, 0.5, self.query_name, "unused", "isolation_source", self.sigs
         )
-        newick_text = Path(f"{self.query_name}_tree.newick").read_text()
         self.assertIn("cand0_water", newick_text)
         self.assertIn("cand1_soil", newick_text)
         self.assertIn("cand2_clinical", newick_text)
         self.assertNotIn("cand3", newick_text)
-        for suffix in ("png", "svg"):
-            self.assertGreater(
-                Path(f"{self.query_name}_tree.{suffix}").stat().st_size, 0
-            )
 
 
 class TestNegativeBranchLength(unittest.TestCase):
@@ -558,10 +553,30 @@ class TestClusterReport(unittest.TestCase):
         self.assertIn(b"<svg", svg)
         width, height = Image.open(BytesIO(png)).size
         self.assertGreater(width, height)
-        many = "(" + ",".join(f"tip_{i}:.1" for i in range(100)) + ");"
-        large_png, _, count = render_tree(many)
-        self.assertEqual(count, 100)
-        self.assertGreater(Image.open(BytesIO(large_png)).height, height * 5)
+        from mashpit.tree_plot import annotate_newick, tree_nodes
+        from Bio import Phylo
+
+        limit = sys.getrecursionlimit()
+        balanced = [f"tip{i}:1" for i in range(201)]
+        while len(balanced) > 1:
+            balanced = [
+                "(" + ",".join(balanced[i : i + 2]) + "):1"
+                for i in range(0, len(balanced), 2)
+            ]
+        ladder = "tip0:1"
+        for i in range(1, 1201):
+            ladder = f"({ladder},tip{i}:1):1"
+        for newick, expected in [(balanced[0] + ";", 201), (ladder + ";", 1201)]:
+            annotated = annotate_newick(newick, {"tip0": "a,b c"})
+            tree = Phylo.read(io.StringIO(annotated), "newick")
+            names = [n.name for n in tree_nodes(tree) if not n.clades]
+            self.assertEqual(len(names), expected)
+            self.assertIn("tip0_a,b_c", names)
+            large_png, large_svg, count = render_tree(annotated, font_size=3)
+            self.assertEqual(count, expected)
+            self.assertEqual(large_svg.count(b"<!-- tip"), expected)
+            self.assertGreater(Image.open(BytesIO(large_png)).height, height)
+        self.assertEqual(sys.getrecursionlimit(), limit)
 
     def test_streamlit_report_and_controls(self):
         from streamlit.testing.v1 import AppTest
@@ -600,6 +615,28 @@ display_results(results, {"Type": "Taxonomy"})
         custom = script.replace('"cluster_df": clusters', '"cluster_df": None')
         app = AppTest.from_string(custom).run(timeout=30)
         self.assertEqual(len(app.exception), 0, str(app.exception))
+
+        failed = script.replace(
+            'display_results(results, {"Type": "Taxonomy"})',
+            "from unittest.mock import patch\n"
+            'with patch("mashpit.streamlit_app.render_report_tree", side_effect=RecursionError("forced preview")):\n'
+            '    display_results(results, {"Type": "Taxonomy"})',
+        )
+        app = AppTest.from_string(failed).run(timeout=30)
+        self.assertEqual(len(app.exception), 0, str(app.exception))
+        self.assertTrue(
+            any("forced preview" in warning.value for warning in app.warning)
+        )
+        self.assertTrue(
+            any(
+                frame.value.equals(
+                    pd.DataFrame(
+                        {"asm_acc": ["a", "b"], "similarity_score": [0.99, 0.98]}
+                    )
+                )
+                for frame in app.dataframe
+            )
+        )
 
 
 def test_cluster_membership_summary_and_ranking(tmp_path):
@@ -768,3 +805,228 @@ def test_custom_build_rejects_duplicate_identity_and_cleans_up(tmp_path):
         )
         assert result.returncode != 0 and "Duplicate identity" in result.stderr
         assert not (tmp_path / "db").exists()
+
+
+@pytest.fixture
+def synthetic_query_db(tmp_path):
+    """Small taxonomy database with tied top hits; no downloads or API calls."""
+    from random import Random
+
+    database = tmp_path / "database"
+    database.mkdir()
+    rng = Random(31)
+    sequence = "".join(rng.choice("ACGT") for _ in range(1200))
+    assembly = tmp_path / "query.fa"
+    assembly.write_text(">query\n" + sequence + "\n")
+    signatures = []
+    with sqlite3.connect(database / "database.db") as conn:
+        create_database(conn)
+        conn.executemany(
+            "INSERT INTO DESC VALUES (?, ?)",
+            [("Type", "Taxonomy"), ("Hash_number", "100"), ("Kmer_size", "21")],
+        )
+        for name, seq, cluster in [
+            ("a", sequence, "A"),
+            ("b", sequence, "B"),
+            ("c", sequence[:600] + "A" * 600, "A"),
+        ]:
+            mh = MinHash(n=100, ksize=21)
+            mh.add_sequence(seq)
+            signatures.append(SourmashSignature(mh, name=name))
+            conn.execute(
+                "INSERT INTO METADATA (biosample_acc, asm_acc, PDS_acc) VALUES (?, ?, ?)",
+                (name, name, cluster),
+            )
+            conn.execute(
+                "INSERT INTO REPRESENTATIVE (asm_acc, PDS_acc) VALUES (?, ?)",
+                (name, cluster),
+            )
+    write_signatures(signatures, database / "database.sig", nshards=1)
+    return database, assembly
+
+
+# Faults execute in the CLI process so exit-code assertions exercise main(),
+# not a test wrapper that converts exceptions into an artificial status code.
+QUERY_FAULT_HARNESS = r"""
+import sys
+from pathlib import Path
+from unittest.mock import patch
+from contextlib import ExitStack
+import pandas as pd
+from mashpit import query as q
+from mashpit.mashpit import main
+mode, database, assembly, *flags = sys.argv[1:]
+sys.argv = ["mashpit", "query", assembly, database, "--number", "3", "--threshold", "0", *flags]
+def forbidden(*args, **kwargs):
+    Path("tree_called").touch()
+    raise AssertionError("disabled tree stage invoked")
+def broken_renderer(*args, **kwargs):
+    Path("query_tree.png").write_bytes(b"partial png")
+    Path("query_tree.svg").write_bytes(b"partial svg")
+    raise RecursionError("forced rendering recursion")
+with ExitStack() as stack:
+    if mode == "render":
+        stack.enter_context(patch.object(q, "render_tree", side_effect=broken_renderer))
+    elif mode in ("construction", "retrieval", "load", "sketch"):
+        name = {"construction": "nj", "retrieval": "fetch_signatures_by_name",
+                "load": "load_file_as_signatures", "sketch": "get_query_sig"}[mode]
+        stack.enter_context(patch.object(q, name, side_effect=RuntimeError("forced " + mode)))
+    elif mode == "image_write":
+        original = q.atomic_write
+        def image_write(path, data):
+            if path.suffix == ".svg":
+                raise OSError("forced image write")
+            return original(path, data)
+        stack.enter_context(patch.object(q, "atomic_write", image_write))
+    elif mode == "similarity":
+        stack.enter_context(patch.object(q.SourmashSignature, "jaccard", side_effect=RuntimeError("forced similarity")))
+    elif mode in ("representative_write", "cluster_write"):
+        original = pd.DataFrame.to_csv
+        suffix = "_representative_matches.csv" if mode == "representative_write" else "_cluster_candidates.csv"
+        def write(frame, path, *args, **kwargs):
+            if str(path).endswith(suffix):
+                raise OSError("forced required output failure")
+            return original(frame, path, *args, **kwargs)
+        stack.enter_context(patch.object(pd.DataFrame, "to_csv", write))
+    elif mode == "no_tree":
+        for name in ("fetch_signatures_by_name", "generate_mashtree", "DistanceMatrix", "nj", "render_tree"):
+            stack.enter_context(patch.object(q, name, side_effect=forbidden))
+        original = q.SourmashSignature.jaccard
+        def jaccard(sig, other, *args, **kwargs):
+            if sig.name in {"a", "b", "c"}:
+                return forbidden()
+            return original(sig, other, *args, **kwargs)
+        stack.enter_context(patch.object(q.SourmashSignature, "jaccard", jaccard))
+    main()
+"""
+
+
+def run_query_case(tmp_path, database, assembly, mode, *flags):
+    folder = tmp_path / mode
+    folder.mkdir()
+    for suffix in ("newick", "png", "svg"):
+        (folder / f"query_tree.{suffix}").write_text("stale artifact")
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            QUERY_FAULT_HARNESS,
+            mode,
+            str(database),
+            str(assembly),
+            *flags,
+        ],
+        cwd=folder,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    return result, folder
+
+
+def search_bytes(folder):
+    return tuple(
+        (folder / f"query_{kind}.csv").read_bytes()
+        for kind in ("representative_matches", "cluster_candidates")
+    )
+
+
+def test_optional_tree_failures_preserve_successful_search(
+    synthetic_query_db, tmp_path
+):
+    import json
+    from Bio import Phylo
+
+    database, assembly = synthetic_query_db
+    baseline, folder = run_query_case(tmp_path, database, assembly, "normal")
+    assert baseline.returncode == 0, baseline.stderr
+    assert (
+        json.loads((folder / "query_tree_status.json").read_text())["status"]
+        == "generated"
+    )
+    expected = search_bytes(folder)
+    assert len(pd.read_csv(folder / "query_representative_matches.csv")) == 3
+    for mode, state in [
+        ("render", "rendering_failed"),
+        ("image_write", "rendering_failed"),
+        ("construction", "construction_failed"),
+    ]:
+        result, folder = run_query_case(tmp_path, database, assembly, mode)
+        assert result.returncode == 0, result.stderr
+        assert search_bytes(folder) == expected
+        status = json.loads((folder / "query_tree_status.json").read_text())
+        assert status["status"] == state and status["search_complete"]
+        assert "forced" in status["reason"] and "WARNING" in result.stderr
+        assert not list(folder.glob("query_tree.*g"))
+        if mode != "construction":
+            assert status["error_type"] == (
+                "RecursionError" if mode == "render" else "OSError"
+            )
+            assert status["newick"] == "query_tree.newick"
+            assert (
+                len(Phylo.read(folder / status["newick"], "newick").get_terminals())
+                == 4
+            )
+        else:
+            assert status["newick"] is None
+            assert not (folder / "query_tree.newick").exists()
+    # Retrieval for a sharded tree is optional too, after its search succeeded.
+    reshard_database(database, nshards=2)
+    result, folder = run_query_case(
+        tmp_path, database, assembly, "retrieval", "--threads", "1"
+    )
+    assert result.returncode == 0, result.stderr
+    assert (
+        json.loads((folder / "query_tree_status.json").read_text())["status"]
+        == "construction_failed"
+    )
+    assert search_bytes(folder) == expected
+
+
+def test_no_tree_and_skips_preserve_identical_search(synthetic_query_db, tmp_path):
+    import json
+
+    database, assembly = synthetic_query_db
+    result, folder = run_query_case(tmp_path, database, assembly, "normal")
+    assert result.returncode == 0, result.stderr
+    expected = search_bytes(folder)
+    for shards in (1, 2):
+        reshard_database(database, nshards=shards)
+        case_root = tmp_path / f"shards{shards}"
+        case_root.mkdir()
+        result, folder = run_query_case(
+            case_root, database, assembly, "no_tree", "--no-tree", "--threads", "1"
+        )
+        assert result.returncode == 0, result.stderr
+        assert not (folder / "tree_called").exists()
+        assert not list(folder.glob("query_tree.*"))
+        status = json.loads((folder / "query_tree_status.json").read_text())
+        assert status["status"] == "disabled"
+        assert search_bytes(folder) == expected
+    for mode, flags in [
+        ("below", ["--threshold", "1.1"]),
+        ("insufficient", ["--number", "1"]),
+    ]:
+        result, folder = run_query_case(
+            tmp_path, database, assembly, mode, "--threads", "1", *flags
+        )
+        assert result.returncode == 0, result.stderr
+        status = json.loads((folder / "query_tree_status.json").read_text())
+        assert status["status"] == "skipped_insufficient_hits" and status["reason"]
+        assert not list(folder.glob("query_tree.*"))
+
+
+def test_search_and_required_output_failures_remain_fatal(synthetic_query_db, tmp_path):
+    database, assembly = synthetic_query_db
+    for mode in (
+        "load",
+        "sketch",
+        "similarity",
+        "representative_write",
+        "cluster_write",
+    ):
+        result, folder = run_query_case(tmp_path, database, assembly, mode)
+        assert result.returncode != 0 and "forced" in result.stderr
+        assert not (folder / "query_tree_status.json").exists()
+        if mode == "cluster_write":
+            assert (folder / "query_representative_matches.csv").is_file()

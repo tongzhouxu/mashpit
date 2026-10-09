@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import json
 import base64
 import os
 import re
@@ -60,7 +61,7 @@ def read_database_summary(database):
     return rows
 
 
-def run_query(uploaded_assembly, database, number, threshold, annotation, tie_tolerance_hashes):
+def run_query(uploaded_assembly, database, number, threshold, annotation, tie_tolerance_hashes, no_tree=False):
     with tempfile.TemporaryDirectory(prefix="mashpit-query-") as temporary:
         work_dir = Path(temporary)
         assembly_name = safe_filename(uploaded_assembly.name)
@@ -81,6 +82,8 @@ def run_query(uploaded_assembly, database, number, threshold, annotation, tie_to
             "--tie-tolerance-hashes",
             str(tie_tolerance_hashes),
         ]
+        if no_tree:
+            command.append("--no-tree")
         if annotation.strip():
             command.extend(["--annotation", annotation.strip()])
 
@@ -97,11 +100,9 @@ def run_query(uploaded_assembly, database, number, threshold, annotation, tie_to
         query_name = assembly_name.split(".")[0]
         representative_path = work_dir / f"{query_name}_representative_matches.csv"
 
-        if not representative_path.is_file():
-            # The representative-matches CSV is written before mashtree
-            # generation, so a missing CSV means a genuine failure (bad
-            # database, sketching error, etc.), not just "no tree could be
-            # built".
+        if completed.returncode != 0 or not representative_path.is_file():
+            # A nonzero exit now always signals a required search failure,
+            # even if an earlier stage managed to write a CSV.
             details = completed.stderr.strip() or completed.stdout.strip()
             raise RuntimeError(
                 details or "Mashpit query failed without producing any output."
@@ -125,17 +126,11 @@ def run_query(uploaded_assembly, database, number, threshold, annotation, tie_to
                 members = read_cluster_members(conn, cluster_df["PDS_acc"])
 
         tree_png = read_optional_bytes(work_dir / f"{query_name}_tree.png")
-        tree_skip_reason = None
-        if tree_png is None:
-            # generate_mashtree exits(1) - and mashpit query with it - when
-            # the top hit is below the threshold or fewer than two hits
-            # qualify. That is a legitimate outcome, not a crash, so the
-            # already-written CSVs are still shown.
-            tree_skip_reason = (
-                completed.stderr.strip()
-                or "A tree was not generated: the top hit may be below the "
-                "similarity threshold, or fewer than two candidates qualified."
-            )
+        try:
+            tree_status = json.loads((work_dir / f"{query_name}_tree_status.json").read_text())
+        except (OSError, ValueError) as error:
+            tree_status = {"status": "unavailable", "reason": f"Tree status unavailable: {error}"}
+        tree_skip_reason = tree_status.get("reason")
 
         return {
             "representative_df": representative_df,
@@ -144,6 +139,7 @@ def run_query(uploaded_assembly, database, number, threshold, annotation, tie_to
             "members": members,
             "cluster_csv": cluster_csv,
             "tree_png": tree_png,
+            "tree_status": tree_status,
             "tree_newick": read_optional_bytes(work_dir / f"{query_name}_tree.newick"),
             "tree_skip_reason": tree_skip_reason,
             "query_name": query_name,
@@ -267,6 +263,45 @@ def render_report_tree(newick, query_name, font_size, spacing):
     return render_tree(newick, query_name, font_size, spacing)
 
 
+def display_tree_results(results):
+    st.caption("Neighbor-joining tree of sketch distances among the query and qualifying representatives. Branch distances are not SNP counts. The query is highlighted in red.")
+    status = results.get("tree_status", {"status": "generated"})
+    st.download_button("Download tree status", json.dumps(status, indent=2),
+                       file_name=f"{results['query_name']}_tree_status.json", mime="application/json")
+    if results.get("tree_newick") is not None:
+        st.download_button("Download Newick", results["tree_newick"],
+                           file_name=f"{results['query_name']}_tree.newick", mime="text/plain")
+        if status["status"] != "generated":
+            st.warning(status.get("reason") or "Tree rendering is unavailable; Newick is retained.")
+            return
+        controls = st.columns(2)
+        font = controls[0].slider("Tip font size (pt)", 7, 18, 10)
+        spacing = controls[1].slider("Tip spacing", 0.8, 2.0, 1.0, 0.1)
+        try:
+            with st.spinner("Rendering tree…"):
+                png, svg, tips = render_report_tree(results["tree_newick"].decode(), results["query_name"], font, spacing)
+        except Exception as error:
+            st.warning(f"Tree preview unavailable ({type(error).__name__}: {error}). Search results and Newick remain available.")
+            return
+        st.caption(f"{tips:,} tips · height follows tip count and font size. Large trees scroll vertically; SVG preserves detail at any zoom.")
+        encoded = base64.b64encode(svg).decode("ascii")
+        svg_height = re.search(r'<svg[^>]*height="([\d.]+)pt"', svg.decode())
+        preview_height = min(650, max(220, int(float(svg_height.group(1)) * 4 / 3) + 32)) if svg_height else 650
+        components.html(
+            '<div style="background:white;padding:12px;width:max-content">'
+            '<img alt="Candidate sketch-distance tree" style="max-width:none" '
+            f'src="data:image/svg+xml;base64,{encoded}"></div>',
+            height=preview_height, scrolling=True,
+        )
+        downloads = st.columns(2)
+        downloads[0].download_button("Download PNG", png, file_name=f"{results['query_name']}_tree.png", mime="image/png")
+        downloads[1].download_button("Download SVG", svg, file_name=f"{results['query_name']}_tree.svg", mime="image/svg+xml")
+    elif results.get("tree_png") is not None:
+        st.image(results["tree_png"], use_container_width=False)
+    else:
+        st.info(results.get("tree_skip_reason") or "No tree was generated.")
+
+
 def display_results(results, db_summary):
     representative_df = results["representative_df"]
     cluster_df = results["cluster_df"]
@@ -295,31 +330,7 @@ def display_results(results, db_summary):
                 metadata_chart(frame, "Country / region", "Geographic context")
                 metadata_chart(frame, "Reported serovar", "Reported serovar")
     with tree_tab:
-        st.caption("Neighbor-joining tree of sketch distances among the query and qualifying representatives. Branch distances are not SNP counts. The query is highlighted in red.")
-        if results.get("tree_newick") is not None:
-            controls = st.columns(2)
-            font = controls[0].slider("Tip font size (pt)", 7, 18, 10)
-            spacing = controls[1].slider("Tip spacing", 0.8, 2.0, 1.0, 0.1)
-            with st.spinner("Rendering tree…"):
-                png, svg, tips = render_report_tree(results["tree_newick"].decode(), results["query_name"], font, spacing)
-            st.caption(f"{tips:,} tips · height follows tip count and font size. Large trees scroll vertically; SVG preserves detail at any zoom.")
-            encoded = base64.b64encode(svg).decode("ascii")
-            svg_height = re.search(r'<svg[^>]*height="([\d.]+)pt"', svg.decode())
-            preview_height = min(650, max(220, int(float(svg_height.group(1)) * 4 / 3) + 32)) if svg_height else 650
-            components.html(
-                '<div style="background:white;padding:12px;width:max-content">'
-                '<img alt="Candidate sketch-distance tree" style="max-width:none" '
-                f'src="data:image/svg+xml;base64,{encoded}"></div>',
-                height=preview_height, scrolling=True,
-            )
-            downloads = st.columns(3)
-            downloads[0].download_button("Download PNG", png, file_name=f"{results['query_name']}_tree.png", mime="image/png")
-            downloads[1].download_button("Download SVG", svg, file_name=f"{results['query_name']}_tree.svg", mime="image/svg+xml")
-            downloads[2].download_button("Download Newick", results["tree_newick"], file_name=f"{results['query_name']}_tree.newick", mime="text/plain")
-        elif results.get("tree_png") is not None:
-            st.image(results["tree_png"], use_container_width=False)
-        else:
-            st.info(results.get("tree_skip_reason") or "No tree was generated.")
+        display_tree_results(results)
     with evidence:
         st.subheader("Representative-level matches")
         st.caption("Similarity scores belong to these representatives. Other members of their clusters were not individually compared with the query.")
@@ -352,6 +363,7 @@ def main():
             help="How many representative genome hits to consider, before "
             "they get grouped into cluster candidates.",
         )
+        no_tree = st.checkbox("Skip tree generation", value=False)
         threshold = st.slider(
             "Tree similarity threshold",
             min_value=0.0,
@@ -404,6 +416,7 @@ def main():
                         float(threshold),
                         annotation,
                         int(tie_tolerance_hashes),
+                        no_tree=no_tree,
                     )
                     st.session_state["mashpit_db_summary"] = read_database_summary(
                         database

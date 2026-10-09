@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 import os
+import json
+from pathlib import Path
 import glob
 import logging
 import multiprocessing as mp
@@ -15,7 +17,7 @@ import pandas as pd
 from functools import partial
 from skbio import DistanceMatrix
 from skbio.tree import nj
-from mashpit.tree_plot import render_tree
+from mashpit.tree_plot import render_tree, annotate_newick
 from mashpit.report import read_cluster_members, summarize_clusters
 from mashpit.build import (
     create_connection,
@@ -124,7 +126,9 @@ def generate_query_table(conn, sorted_asm_similarity_dict):
     return output_df
 
 
-def generate_cluster_table(conn, representative_df, hash_number, tie_tolerance_hashes=2):
+def generate_cluster_table(
+    conn, representative_df, hash_number, tie_tolerance_hashes=2
+):
     # Groups the per-representative hits by SNP cluster (PDS_acc) so that
     # multiple representatives supporting the same cluster show up as one
     # row instead of scattered duplicates. hits_in_results/
@@ -179,8 +183,9 @@ def generate_cluster_table(conn, representative_df, hash_number, tie_tolerance_h
 def generate_mashtree(
     output_df, min_similarity, query_name, sig_path, added_annotation, database_sig
 ):
+    """Construct Newick only; retrieval, pairwise distances and NJ are optional."""
     # check if the top query similarity is smaller than the threshold
-    if float(output_df["similarity_score"].iloc[0]) < min_similarity:
+    if output_df.empty or float(output_df["similarity_score"].iloc[0]) < min_similarity:
         raise MashtreeSkipped(
             "Top query similarity is smaller than the threshold. Mashtree can not be generated. "
         )
@@ -193,6 +198,8 @@ def generate_mashtree(
         raise MashtreeSkipped(
             "Number of top results is smaller than 2. Mashtree can not be generated. "
         )
+    if database_sig is None:
+        database_sig = fetch_signatures_by_name(sig_path, acc_list)
     leaves = [query_name] + acc_list
     # select database signatures that are present in acc_list
     sigs = []
@@ -223,30 +230,119 @@ def generate_mashtree(
 
     dm = DistanceMatrix(matrix, leaves)
     newick_str = nj(dm, result_constructor=str)
-    with open(f"{query_name}_tree.newick", "w") as f:
-        f.write(newick_str)
-
-    # Annotate labels without recomputing the topology. BioPython quotes
-    # punctuation safely; underscores preserve the existing export convention.
     if added_annotation is not None:
-        from io import StringIO
-        from Bio import Phylo
-
-        tree = Phylo.read(StringIO(newick_str), "newick")
         annotations = output_df.set_index("asm_acc")[added_annotation].to_dict()
-        for tip in tree.get_terminals():
-            if tip.name in annotations:
-                tip.name = tip.name + "_" + "_".join(str(annotations[tip.name]).split())
-        buffer = StringIO()
-        Phylo.write(tree, buffer, "newick", format_branch_length="%.10g")
-        newick_str = buffer.getvalue()
-        with open(f"{query_name}_tree.newick", "w") as f:
-            f.write(newick_str)
-    png, svg, _ = render_tree(newick_str, query_name)
-    with open(f"{query_name}_tree.png", "wb") as output:
-        output.write(png)
-    with open(f"{query_name}_tree.svg", "wb") as output:
-        output.write(svg)
+        newick_str = annotate_newick(newick_str, annotations)
+    return newick_str
+
+
+def atomic_write(path, data):
+    """Publish a complete artifact, removing the temporary file on failure."""
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            dir=path.parent, prefix=".mashpit-", delete=False
+        ) as output:
+            temporary = Path(output.name)
+            output.write(data)
+        os.replace(temporary, path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def optional_tree_outputs(
+    output_df,
+    min_similarity,
+    query_name,
+    sig_path,
+    added_annotation,
+    database_sig,
+    no_tree=False,
+):
+    """Called only AFTER required search outputs have been written successfully."""
+    paths = {
+        kind: Path(f"{query_name}_tree.{suffix}")
+        for kind, suffix in (("newick", "newick"), ("png", "png"), ("svg", "svg"))
+    }
+    status_path = Path(f"{query_name}_tree_status.json")
+    status = dict(
+        schema_version=1,
+        search_complete=True,
+        status="disabled",
+        reason="Tree generation disabled by --no-tree.",
+        error_type=None,
+        newick=None,
+        png=None,
+        svg=None,
+    )
+
+    def remove_artifacts(kinds):
+        for kind in kinds:
+            try:
+                paths[kind].unlink(missing_ok=True)
+            except OSError as error:
+                message = f"Cannot remove {paths[kind]}: {error}"
+                status.setdefault("cleanup_errors", []).append(message)
+                logging.warning(message)
+
+    def failure(stage, error):
+        status.update(
+            status=stage,
+            reason=f"{type(error).__name__}: {error}",
+            error_type=type(error).__name__,
+        )
+        logging.warning(
+            "Search tables saved; optional tree %s: %s", stage, status["reason"]
+        )
+
+    # Eliminate stale artifacts from an earlier query with the same prefix.
+    remove_artifacts(paths)
+    try:
+        status_path.unlink(missing_ok=True)
+    except OSError as error:
+        logging.warning("Cannot remove previous tree status: %s", error)
+    if not no_tree:
+        try:
+            newick = generate_mashtree(
+                output_df,
+                min_similarity,
+                query_name,
+                sig_path,
+                added_annotation,
+                database_sig,
+            )
+            atomic_write(paths["newick"], newick.encode())
+            status["newick"] = str(paths["newick"])
+        except MashtreeSkipped as error:
+            status.update(status="skipped_insufficient_hits", reason=str(error))
+            logging.warning("Search tables saved; tree skipped: %s", error)
+        except Exception as error:
+            failure("construction_failed", error)
+        else:
+            try:
+                png, svg, _ = render_tree(newick, query_name)
+                atomic_write(paths["png"], png)
+                atomic_write(paths["svg"], svg)
+            except Exception as error:
+                remove_artifacts(("png", "svg"))
+                failure("rendering_failed", error)
+            else:
+                status.update(
+                    status="generated",
+                    reason=None,
+                    png=str(paths["png"]),
+                    svg=str(paths["svg"]),
+                )
+    try:
+        atomic_write(status_path, (json.dumps(status, indent=2) + "\n").encode())
+    except Exception as error:
+        logging.warning(
+            "Search tables saved, but cannot write tree status %s: %s",
+            status_path,
+            error,
+        )
+    return status
 
 
 def query(args):
@@ -370,22 +466,6 @@ def query(args):
             f"Top {number_results} results sorted in {time_sort-time_calculate_similarity:.2f} seconds"
         )
 
-        if database_sig is None:
-            # Sharded database: only the (typically small) set of hits that
-            # actually clear --threshold is needed to build the tree, so
-            # fetch just those instead of the full database - the same
-            # candidate set generate_mashtree derives internally below.
-            top_score = next(iter(sorted_asm_similarity_dict.values()), 0.0)
-            candidate_names = [
-                name
-                for name, score in sorted_asm_similarity_dict.items()
-                if score >= min_similarity
-            ]
-            if top_score >= min_similarity and len(candidate_names) >= 2:
-                database_sig = fetch_signatures_by_name(sig_path, candidate_names)
-            else:
-                database_sig = []
-
         output_df = generate_query_table(conn, sorted_asm_similarity_dict)
     finally:
         shutil.rmtree(sketch_dir, ignore_errors=True)
@@ -399,20 +479,13 @@ def query(args):
         )
         cluster_df.to_csv(query_name + "_cluster_candidates.csv", index=True)
 
-    # A skipped tree (top hit below threshold, or fewer than two qualifying
-    # hits) is a legitimate outcome, not a failure: the CSVs above are
-    # already valid and complete, so it must not turn into a non-zero exit
-    # for the whole query.
-    try:
-        generate_mashtree(
-            output_df,
-            min_similarity,
-            query_name,
-            sig_path,
-            added_annotation,
-            database_sig,
-        )
-        time_mashtree = time.time()
-        logging.info(f"Mashtree generated in {time_mashtree-time_sort:.2f} seconds")
-    except MashtreeSkipped as error:
-        logging.warning(str(error))
+    conn.close()
+    optional_tree_outputs(
+        output_df,
+        min_similarity,
+        query_name,
+        sig_path,
+        added_annotation,
+        database_sig,
+        no_tree=getattr(args, "no_tree", False),
+    )
