@@ -316,7 +316,21 @@ A query produces:
 
    `reason` explains a skip/failure, and `error_type` identifies the exception for failures. `newick`, `png`, and `svg` contain filenames for successfully written outputs, otherwise `null`. A rendering failure retains valid Newick and removes partial PNG/SVG files. Previous tree artifacts with the same query prefix are removed before the optional workflow. Files that cannot be removed are listed in `cleanup_errors`; use the status fields rather than file existence to decide which artifacts are valid.
 
-5. **Log file**
+5. **Standalone HTML report**
+
+   `<query>_report.html` opens directly in a browser, with no Streamlit or web
+   server required. It includes ranked SNP clusters, full cluster sizes,
+   clinical/environmental/unknown counts and percentages, sampling dates,
+   computed serotypes, and representative evidence. The tree image (when
+   available) and downloadable CSV/Newick files are embedded, so the report
+   can be shared as one file and viewed offline. `--no-tree` still produces
+   the report, with the tree marked as disabled. Accession/custom databases
+   show returned-isolate metadata without SNP cluster statistics.
+
+   The output path is printed in the query log. If report generation fails,
+   Mashpit logs a warning and retains the successful CSV results.
+
+6. **Log file**
 
    A timestamped record of the query parameters and processing steps.
 
@@ -368,7 +382,12 @@ The report has three views:
 
 New taxon builds retain `CLUSTER_MEMBERS` from the complete release membership, including members without assemblies or downloaded genomes. Cluster size counts unique Pathogen Detection target accessions, not representatives. `epi_type` supplies environmental/clinical categories; unknown values remain explicit. Date summaries use valid ISO years, months, or dates and report their coverage. Raw dates, including ranges, remain in the isolate download. Computed serotype predictions are kept separate from submitted `serovar` values, and the original `computed_types` field is retained.
 
-**Existing databases:** older taxon databases contain only representative metadata. They continue to work, but full cluster sizes and source ratios are unavailable until the taxon database is rebuilt with this version. The report never substitutes representative counts for full cluster size. Accession/custom databases show metadata for returned isolates without implying SNP cluster membership.
+**Existing databases:** older taxon databases with bundled versioned membership
+and metadata TSVs (including IsoScout `databases-v2`) support full cluster
+statistics without rebuilding. Databases containing only representative
+metadata show those statistics as unavailable until rebuilt. The report never
+substitutes representative counts for full cluster size. Accession/custom
+databases show metadata for returned isolates without implying SNP cluster membership.
 
 The near-top flag uses the configured sketch-hash tolerance; it is a screening heuristic, not a statistical confidence interval. Cluster-member metadata are context: similarity was measured only for the returned representatives.
 

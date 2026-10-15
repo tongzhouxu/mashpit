@@ -711,6 +711,37 @@ def test_cluster_membership_summary_and_ranking(tmp_path):
         # Older IsoScout packages keep full TSVs but have no CLUSTER_MEMBERS table.
         expected_members = read_cluster_members(conn, ["A", "B"])
         expected_summary = generate_cluster_table(conn, hits, 1000)
+        # The HTML report uses the full-cluster denominator and embeds exact CSVs.
+        import base64
+        from html.parser import HTMLParser
+        from mashpit.html_report import render_query_report
+
+        class Downloads(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.files = {}
+
+            def handle_starttag(self, tag, attrs):
+                attrs = dict(attrs)
+                if tag == "a" and "download" in attrs:
+                    self.files[attrs["download"]] = base64.b64decode(attrs["href"].split(",", 1)[1])
+
+        evidence = hits.assign(strain='<script>alert("metadata")</script>')
+        evidence.to_csv("sample_representative_matches.csv", index=True)
+        expected_summary.to_csv("sample_cluster_candidates.csv", index=True)
+        report = render_query_report(
+            "sample", "fixture", {"Version": "PDG000000004.5775"}, evidence,
+            expected_summary, {"status": "disabled", "reason": "Tree disabled"}, 200, 2,
+        )
+        assert report.count("1 (33.3%)") == 3  # clinical, environmental, unknown out of 3
+        assert "PDG000000004.5775" in report and "4,[5],12:i:-" in report
+        assert "<script>" not in report and "&lt;script&gt;" in report
+        downloads = Downloads()
+        downloads.feed(report)
+        assert len(downloads.files) == 2
+        for filename, content in downloads.files.items():
+            assert content == Path(filename).read_bytes()
+
         conn.execute("DROP TABLE CLUSTER_MEMBERS")
         conn.execute("INSERT INTO DESC VALUES ('Version', 'PDG000000004.5775')")
         conn.commit()
@@ -797,6 +828,9 @@ def test_local_build_query_annotate_reshard_workflow(tmp_path):
 
     def query():
         run_cli("query", inputs / "sample0.fasta", "db", "--threshold", "0")
+        report = (tmp_path / "sample0_report.html").read_text()
+        assert "This database has no SNP cluster membership" in report
+        assert "Updated" in report and "GCA_override" in report
         frame = pd.read_csv("sample0_representative_matches.csv", index_col=0)
         assert frame.iloc[0]["asm_acc"] == "GCA_override"
         assert frame.iloc[0]["similarity_score"] == 1
@@ -974,6 +1008,10 @@ def test_optional_tree_failures_preserve_successful_search(
     database, assembly = synthetic_query_db
     baseline, folder = run_query_case(tmp_path, database, assembly, "normal")
     assert baseline.returncode == 0, baseline.stderr
+    report = (folder / "query_report.html").read_text()
+    assert "data:image/png;base64," in report
+    assert "2 clusters are near the top" in report
+    assert "Full cluster metadata are unavailable" in report
     assert (
         json.loads((folder / "query_tree_status.json").read_text())["status"]
         == "generated"
@@ -990,6 +1028,8 @@ def test_optional_tree_failures_preserve_successful_search(
         assert search_bytes(folder) == expected
         status = json.loads((folder / "query_tree_status.json").read_text())
         assert status["status"] == state and status["search_complete"]
+        report = (folder / "query_report.html").read_text()
+        assert "data:image/png;base64," not in report and "forced" in report
         assert "forced" in status["reason"] and "WARNING" in result.stderr
         assert not list(folder.glob("query_tree.*g"))
         if mode != "construction":
@@ -1036,6 +1076,9 @@ def test_no_tree_and_skips_preserve_identical_search(synthetic_query_db, tmp_pat
         assert not list(folder.glob("query_tree.*"))
         status = json.loads((folder / "query_tree_status.json").read_text())
         assert status["status"] == "disabled"
+        report = (folder / "query_report.html").read_text()
+        assert "Tree generation disabled by --no-tree" in report
+        assert "data:image/png;base64," not in report
         assert search_bytes(folder) == expected
     for mode, flags in [
         ("below", ["--threshold", "1.1"]),

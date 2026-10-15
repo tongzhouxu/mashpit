@@ -19,6 +19,7 @@ from skbio import DistanceMatrix
 from skbio.tree import nj
 from mashpit.tree_plot import render_tree, annotate_newick
 from mashpit.report import read_cluster_members, summarize_clusters
+from mashpit.html_report import render_query_report
 from mashpit.build import (
     create_connection,
     fetch_signatures_by_name,
@@ -471,6 +472,7 @@ def query(args):
         shutil.rmtree(sketch_dir, ignore_errors=True)
     output_df.to_csv(query_name + "_representative_matches.csv", index=True)
 
+    cluster_df = None
     c.execute("SELECT value FROM DESC WHERE name = 'Type';")
     db_type = c.fetchone()[0]
     if db_type == "Taxonomy":
@@ -479,8 +481,9 @@ def query(args):
         )
         cluster_df.to_csv(query_name + "_cluster_candidates.csv", index=True)
 
+    settings = dict(conn.execute("SELECT name, value FROM DESC"))
     conn.close()
-    optional_tree_outputs(
+    tree_status = optional_tree_outputs(
         output_df,
         min_similarity,
         query_name,
@@ -489,3 +492,14 @@ def query(args):
         database_sig,
         no_tree=getattr(args, "no_tree", False),
     )
+    report_path = Path(query_name + "_report.html")
+    try:
+        report_path.unlink(missing_ok=True)
+        report = render_query_report(
+            query_name, Path(db_folder).name, settings, output_df, cluster_df,
+            tree_status, number_results, args.tie_tolerance_hashes,
+        )
+        atomic_write(report_path, report.encode("utf-8"))
+        logging.info("HTML report saved: %s", report_path.resolve())
+    except Exception as error:
+        logging.warning("Search tables saved, but HTML report could not be generated: %s", error)
