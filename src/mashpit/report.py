@@ -1,5 +1,6 @@
 """Cluster metadata summaries, independent of the GUI and sketch ranking."""
 import re
+from pathlib import Path
 
 import pandas as pd
 
@@ -89,12 +90,12 @@ def store_cluster_members(conn, metadata):
 
 
 def read_cluster_members(conn, clusters):
+    clusters = list(dict.fromkeys(clusters))
     exists = conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='CLUSTER_MEMBERS'"
     ).fetchone()
     if not exists:
-        return pd.DataFrame()
-    clusters = list(dict.fromkeys(clusters))
+        return read_bundled_cluster_members(conn, clusters)
     frames = []
     for start in range(0, len(clusters), 400):
         batch = clusters[start:start + 400]
@@ -104,6 +105,39 @@ def read_cluster_members(conn, clusters):
             conn, params=batch,
         ))
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+
+def read_bundled_cluster_members(conn, clusters):
+    """Read older packaged databases without rebuilding or modifying SQLite."""
+    database_path = next((row[2] for row in conn.execute("PRAGMA database_list")
+                          if row[1] == "main"), "")
+    if not database_path or not clusters:
+        return pd.DataFrame()
+    release_row = conn.execute("SELECT value FROM DESC WHERE name='Version'").fetchone()
+    if not release_row or not re.fullmatch(r"PDG\d+\.\d+", release_row[0]):
+        return pd.DataFrame()
+    release = release_row[0]
+    directory = Path(database_path).parent / "membership"
+    metadata = directory / (release + ".metadata.tsv.gz")
+    membership = directory / (release + ".reference_target.all_isolates.tsv.gz")
+    if not metadata.is_file() or not membership.is_file():
+        return pd.DataFrame()
+    selected = []
+    for chunk in pd.read_csv(membership, sep="\t", dtype=str,
+                             usecols=["target_acc", "PDS_acc"], chunksize=100000):
+        selected.append(chunk[chunk["PDS_acc"].isin(clusters)])
+    members = pd.concat(selected, ignore_index=True).drop_duplicates(["PDS_acc", "target_acc"])
+    if members.empty:
+        return members
+    targets = set(members["target_acc"])
+    fields = set(MEMBER_COLUMNS) - {"PDS_acc"}
+    selected = []
+    for chunk in pd.read_csv(metadata, sep="\t", dtype=str,
+                             usecols=lambda column: column in fields, chunksize=100000):
+        selected.append(chunk[chunk["target_acc"].isin(targets)])
+    details = pd.concat(selected, ignore_index=True).drop_duplicates("target_acc")
+    # Membership defines the denominator, including isolates with missing metadata.
+    return members.merge(details, on="target_acc", how="left")
 
 
 def summarize_clusters(members):

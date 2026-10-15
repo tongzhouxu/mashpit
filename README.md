@@ -100,6 +100,9 @@ DATABASE_NAME/
 │                                   #   see "Sharding a database for faster loading")
 ├── representatives.tsv            # taxon databases only
 ├── cluster_summary.tsv            # taxon databases only
+├── membership/                    # complete source-release TSVs for taxon databases
+│   ├── PDG_VERSION.metadata.tsv.gz
+│   └── PDG_VERSION.reference_target.all_isolates.tsv.gz
 ├── unavailable_assemblies.tsv     # taxon/accession databases: accessions that could not be downloaded
 └── unavailable_sequences.tsv      # custom databases: local FASTA files that failed to sketch
 ```
@@ -107,6 +110,17 @@ DATABASE_NAME/
 The build log itself (`mashpit-<timestamp>.log`) is written to the current working directory alongside the database folder, not inside it.
 
 Keep the entire database directory together when moving it to another computer.
+
+Taxon builds retain the full metadata and cluster-isolate membership from the
+same resolved PDG release, including isolates without a downloadable assembly.
+The SQLite `CLUSTER_MEMBERS` table contains the fields used by cluster reports;
+the compressed TSVs preserve all original columns for later use and candidate
+expansion. Clinical/environmental statistics count all cluster members, with
+unknown sources reported separately, rather than only the sketched representatives.
+Reports can also read these versioned TSVs from older packages, including
+IsoScout `databases-v2`, when `CLUSTER_MEMBERS` is absent. Older databases with
+neither source show unavailable cluster statistics. Accession and custom builds
+have no NCBI cluster membership snapshot.
 
 ## Building a database
 

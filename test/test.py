@@ -1,6 +1,7 @@
 """Core offline regressions. Run with: python -m pytest test/test.py"""
 
 import hashlib
+import gzip
 import io
 import shutil
 import sqlite3
@@ -24,6 +25,7 @@ from mashpit.build import (
     load_metadata,
     load_tree_graph,
     read_annotation_log,
+    retain_release_tables,
     reshard_database,
     safe_extract_tar,
     select_all_representatives,
@@ -336,6 +338,10 @@ class TestBuildTaxonReselection(unittest.TestCase):
 
         self.tree_path = Path.cwd() / (self.name + ".nwk")
         self.tree_path.write_text("(PDT0000001.1:5,PDT0000002.1:5);")
+        self.metadata_path = Path.cwd() / "meta.tsv"
+        self.isolate_path = Path.cwd() / "iso.tsv"
+        self.metadata_path.write_text("target_acc\tasm_acc\nPDT0000002.1\tGCA_B\n")
+        self.isolate_path.write_text("target_acc\tPDS_acc\nPDT0000002.1\tPDSTEST\n")
 
         self.eligible = pd.DataFrame(
             {
@@ -372,8 +378,8 @@ class TestBuildTaxonReselection(unittest.TestCase):
             patch(
                 "mashpit.build.download_release_files",
                 return_value=(
-                    Path("meta.tsv"),
-                    Path("iso.tsv"),
+                    self.metadata_path,
+                    self.isolate_path,
                     {"PDSTEST": self.tree_path},
                 ),
             ),
@@ -417,6 +423,13 @@ class TestBuildTaxonReselection(unittest.TestCase):
         representatives = [row[0] for row in cursor.fetchall()]
         conn.close()
         self.assertEqual(representatives, ["GCA_B"])
+        for source, filename in (
+            (self.metadata_path, "PDGFAKE.metadata.tsv.gz"),
+            (self.isolate_path, "PDGFAKE.reference_target.all_isolates.tsv.gz"),
+        ):
+            with gzip.open(self.db_folder / "membership" / filename, "rb") as handle:
+                self.assertEqual(handle.read(), source.read_bytes())
+        self.assertFalse(self.tmp_folder.exists())
 
     def test_reselection_exhausts_budget_and_raises(self):
         self.args.max_reselection_rounds = 1
@@ -657,7 +670,7 @@ def test_cluster_membership_summary_and_ranking(tmp_path):
     )
     full, eligible = load_metadata(metadata, membership)
     assert len(full) == 4 and len(eligible) == 3
-    conn = create_connection(":memory:")
+    conn = create_connection(str(tmp_path / "test.db"))
     try:
         create_database(conn)
         hits = pd.DataFrame(
@@ -694,6 +707,27 @@ def test_cluster_membership_summary_and_ranking(tmp_path):
         assert a.computed_serotype_known == 2
         hits.loc[0, "similarity_score"] = 0.998
         assert generate_cluster_table(conn, hits, 1000).near_top.all()
+
+        # Older IsoScout packages keep full TSVs but have no CLUSTER_MEMBERS table.
+        expected_members = read_cluster_members(conn, ["A", "B"])
+        expected_summary = generate_cluster_table(conn, hits, 1000)
+        conn.execute("DROP TABLE CLUSTER_MEMBERS")
+        conn.execute("INSERT INTO DESC VALUES ('Version', 'PDG000000004.5775')")
+        conn.commit()
+        retain_release_tables(tmp_path, "PDG000000004.5775", metadata, membership)
+        from mashpit.report import prepare_members
+        actual_members = read_cluster_members(conn, ["A", "B"])
+        for frame in (expected_members, actual_members):
+            assert len(frame) == 4
+        columns = ["target_acc", "PDS_acc", "Source group", "Computed serotype"]
+        pd.testing.assert_frame_equal(
+            prepare_members(expected_members)[columns].sort_values("target_acc").reset_index(drop=True),
+            prepare_members(actual_members)[columns].sort_values("target_acc").reset_index(drop=True),
+        )
+        pd.testing.assert_frame_equal(generate_cluster_table(conn, hits, 1000), expected_summary)
+        # Only the recorded release is eligible; unrelated snapshots are not substituted.
+        conn.execute("UPDATE DESC SET value='PDG000000004.5776' WHERE name='Version'")
+        assert read_cluster_members(conn, ["A"]).empty
     finally:
         conn.close()
 

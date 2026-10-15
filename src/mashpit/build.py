@@ -2,6 +2,7 @@
 
 import csv
 import glob
+import gzip
 import hashlib
 import logging
 import os
@@ -326,7 +327,24 @@ def resolve_release(pathogen_name, pd_version):
         raise RuntimeError("No metadata file found under %s" % latest_url)
 
     pdg_acc = metadata_names[0].replace(".metadata.tsv", "")
-    return latest_url, pdg_acc
+    # Resolve latest once, then download every artifact from that same release.
+    release_url = "https://ftp.ncbi.nlm.nih.gov/pathogen/Results/%s/%s/" % (
+        pathogen_name, pdg_acc,
+    )
+    return release_url, pdg_acc
+
+
+def retain_release_tables(db_folder, pdg_acc, metadata_path, isolate_path):
+    """Keep the complete source tables for reports and later member expansion."""
+    directory = db_folder / "membership"
+    directory.mkdir()
+    for source, suffix in (
+        (metadata_path, ".metadata.tsv.gz"),
+        (isolate_path, ".reference_target.all_isolates.tsv.gz"),
+    ):
+        with source.open("rb") as original, (directory / (pdg_acc + suffix)).open("wb") as output:
+            with gzip.GzipFile(filename="", mode="wb", mtime=0, fileobj=output) as packed:
+                shutil.copyfileobj(original, packed)
 
 
 def download_release_files(release_url, pdg_acc, tmp_folder):
@@ -1346,6 +1364,8 @@ def build_taxon(args):
             tmp_folder / "unavailable_assemblies.tsv",
             db_folder / "unavailable_assemblies.tsv",
         )
+
+        retain_release_tables(db_folder, pdg_acc, metadata_path, isolate_path)
 
         conn.close()
         shutil.rmtree(str(tmp_folder))
