@@ -329,6 +329,69 @@ mashpit reshard my_database --shards 64
 mashpit reshard my_database --shards 1
 ```
 
+## Merging compatible databases
+
+Merge two or more local database snapshots into a **new** directory:
+
+```bash
+mashpit merge combined database_a database_b
+```
+
+Inputs can be database directories or `.db` files. Inputs remain unchanged and
+an existing output is refused. The command works offline and loads the input
+sketches and metadata into memory; allow enough RAM for their combined size.
+The output supports the usual query, annotate, and reshard commands.
+
+Supported combinations and requirements:
+
+- **Custom + custom:** matching sketch settings. Identical IDs with identical
+  sketches are deduplicated. Different IDs remain separate even if their sketches
+  match. An ID with different sketches is rejected.
+- **Taxon + taxon:** additionally require the same species, PDG release,
+  representative method, and tree radius. Full cluster membership must be
+  available for every represented cluster. Representatives are unioned and
+  membership is deduplicated by target accession. Cluster summaries are
+  recalculated from membership, never by adding input cluster-size totals.
+- Mixed types, accession databases, different PDG releases, and older taxon
+  databases lacking the required settings or membership are rejected. Merging
+  is not a release-update or representative-reselection operation.
+
+Actual signature settings must agree across all inputs: k-mer size, molecule
+type, seed, hash count, scaled setting, and abundance tracking. Hash counts and
+k-mer sizes must also agree with database descriptions. No automatic downsampling
+or re-sketching takes place.
+
+For independent custom datasets with overlapping sample IDs, explicitly prefix
+both assembly and BioSample IDs, with one prefix per input:
+
+```bash
+mashpit merge combined lab_a lab_b --prefixes labA_ labB_
+```
+
+Metadata columns are unioned and missing values can be filled from another
+source. Conflicting nonempty values stop the merge; no input takes priority.
+Assembly IDs and BioSample IDs must each remain unique. Prefixes are available
+only for custom inputs. Without prefixes, resolve conflicting metadata in a
+separate copy of an input before retrying.
+
+To save the first conflicting record and field as JSON:
+
+```bash
+mashpit merge combined database_a database_b --conflict-report conflicts.json
+```
+
+The report path must be new. Compatibility errors are reported directly.
+No output database is published on failure.
+
+`merge_provenance.json` records source paths, original settings, ID mappings,
+and deduplication counts. Source build tables, unavailable-record tables, and prior merge manifests
+are retained under `merge_sources/`, and annotation history is preserved with source paths.
+Available versioned release TSVs are combined without dropping their columns;
+conflicting records are rejected. Taxon output includes rebuilt
+`representatives.tsv` and `cluster_summary.tsv`. Source-specific download
+attempts and original FASTA paths remain in provenance rather than being
+presented as properties of the merged representatives.
+
 ## Querying a database
 
 Run a query using an assembled genome in FASTA format:

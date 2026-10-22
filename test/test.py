@@ -1107,3 +1107,169 @@ def test_search_and_required_output_failures_remain_fatal(synthetic_query_db, tm
         assert not (folder / "query_tree_status.json").exists()
         if mode == "cluster_write":
             assert (folder / "query_representative_matches.csv").is_file()
+
+
+
+def make_merge_input(root, name, ids, taxon=False):
+    """Small snapshots shared by the three merge regressions below."""
+    directory = root / name
+    directory.mkdir()
+    with sqlite3.connect(directory / (name + ".db")) as conn:
+        create_database(conn)
+        desc = {
+            "Type": "Taxonomy" if taxon else "Custom",
+            "Hash_number": "100",
+            "Kmer_size": "21",
+        }
+        if taxon:
+            desc.update(
+                Species="Synthetic_species",
+                Version="PDG000000001.1",
+                Representative_method="tree_radius",
+                Tree_radius="25.0",
+            )
+        conn.executemany("INSERT INTO DESC VALUES (?, ?)", desc.items())
+        for identity in ids:
+            conn.execute(
+                "INSERT INTO METADATA (biosample_acc, asm_acc, PDS_acc) VALUES (?, ?, ?)",
+                ("bio_" + identity, identity, "cluster" if taxon else "missing"),
+            )
+            if taxon:
+                conn.execute("UPDATE METADATA SET PDT_acc=? WHERE asm_acc=?",
+                             ("target_" + identity, identity))
+                conn.execute(
+                    "INSERT INTO REPRESENTATIVE (asm_acc, PDT_acc, PDS_acc, tree_radius, fasta_path) VALUES (?, ?, ?, ?, ?)",
+                    (
+                        identity,
+                        "target_" + identity,
+                        "cluster",
+                        25.0,
+                        str(directory / identity),
+                    ),
+                )
+        if taxon:
+            pd.DataFrame(
+                [
+                    dict(
+                        target_acc="target_" + i, PDS_acc="cluster", epi_type="clinical"
+                    )
+                    for i in ["a", "b", "c"]
+                ]
+            ).to_sql("CLUSTER_MEMBERS", conn, index=False)
+    signatures = []
+    for identity in ids:
+        mh = MinHash(n=100, ksize=21)
+        from random import Random
+
+        rng = Random(identity)
+        sequence = "".join(rng.choice("ACGT") for _ in range(500))
+        (directory / (identity + ".fasta")).write_text(">contig\n" + sequence + "\n")
+        mh.add_sequence(sequence)
+        signatures.append(SourmashSignature(mh, name=identity))
+    write_signatures(signatures, directory / (name + ".sig"), nshards=1)
+    return directory
+
+
+def test_merge_custom_workflow(tmp_path):
+    from mashpit.merge import merge_databases
+
+    a = make_merge_input(tmp_path, "a", ["a", "b"])
+    b = make_merge_input(tmp_path, "b", ["b", "c"])
+    # Nullable integer columns can load as floats in only one input.
+    with sqlite3.connect(a / "a.db") as conn:
+        conn.execute("UPDATE METADATA SET taxid=1")
+    with sqlite3.connect(b / "b.db") as conn:
+        conn.execute("UPDATE METADATA SET taxid=1 WHERE asm_acc='b'")
+    values = tmp_path / "merge_values.tsv"
+    values.write_text("asm_acc\tbatch\nb\tcombined\n")
+    run_cli("annotate", a, "--values", values)
+    before = (a / "a.db").read_bytes()
+    run_cli("merge", tmp_path / "merged", a, b)
+    merged = tmp_path / "merged"
+    assert {s.name for s in load_all_signatures(merged / "merged.sig")} == {
+        "a",
+        "b",
+        "c",
+    }
+    import json
+
+    assert (
+        json.loads((merged / "merge_provenance.json").read_text())[
+            "deduplicated_signatures"
+        ]
+        == 1
+    )
+    run_cli("reshard", merged, "--shards", 2)
+    run_cli("annotate", merged, "--values", values)
+    run_cli("query", a / "b.fasta", merged, "--no-tree")
+    matches = pd.read_csv(tmp_path / "b_representative_matches.csv", index_col=0)
+    assert matches.iloc[0].asm_acc == "b"
+    assert matches.iloc[0].similarity_score == 1
+    assert matches.iloc[0].batch == "combined"
+    assert len(read_annotation_log(merged / "merged.db")) == 2
+    with sqlite3.connect(merged / "merged.db") as conn:
+        assert conn.execute("SELECT COUNT(*) FROM METADATA").fetchone()[0] == 3
+    merge_databases([a, b], tmp_path / "prefixed", ["lab1_", "lab2_"])
+    assert {
+        s.name for s in load_all_signatures(tmp_path / "prefixed" / "prefixed.sig")
+    } == {"lab1_a", "lab1_b", "lab2_b", "lab2_c"}
+    assert (a / "a.db").read_bytes() == before
+    with pytest.raises(FileExistsError):
+        merge_databases([a, b], merged)
+
+
+def test_merge_taxon_membership(tmp_path):
+    from mashpit.merge import merge_databases
+
+    a = make_merge_input(tmp_path, "a", ["a", "b"], taxon=True)
+    b = make_merge_input(tmp_path, "b", ["b", "c"], taxon=True)
+    for directory in [a, b]:
+        (directory / "membership").mkdir()
+        pd.DataFrame(
+            [dict(target_acc="target_" + i, extra="retained") for i in ["a", "b", "c"]]
+        ).to_csv(
+            directory / "membership" / "PDG000000001.1.metadata.tsv.gz",
+            sep="\t",
+            index=False,
+        )
+    merge_databases([a, b], tmp_path / "merged")
+    archived = pd.read_csv(
+        tmp_path / "merged" / "membership" / "PDG000000001.1.metadata.tsv.gz", sep="\t"
+    )
+    assert len(archived) == 3 and set(archived.extra) == {"retained"}
+    with sqlite3.connect(tmp_path / "merged" / "merged.db") as conn:
+        assert conn.execute("SELECT COUNT(*) FROM CLUSTER_MEMBERS").fetchone()[0] == 3
+        assert conn.execute("SELECT COUNT(*) FROM REPRESENTATIVE").fetchone()[0] == 3
+    summary = pd.read_csv(tmp_path / "merged" / "cluster_summary.tsv", sep="\t")
+    assert summary.iloc[0].cluster_size == 3
+    assert summary.iloc[0].clinical_count == 3
+
+
+def test_merge_rejects_incompatible_inputs(tmp_path):
+    from mashpit.merge import MergeConflict, merge_databases
+
+    a = make_merge_input(tmp_path, "a", ["a"], taxon=True)
+    b = make_merge_input(tmp_path, "b", ["a"], taxon=True)
+    output = tmp_path / "rejected"
+    with sqlite3.connect(b / "b.db") as conn:
+        conn.execute("UPDATE DESC SET value='PDG000000001.2' WHERE name='Version'")
+    with pytest.raises(ValueError, match="Incompatible database settings"):
+        merge_databases([a, b], output)
+    with sqlite3.connect(b / "b.db") as conn:
+        conn.execute("UPDATE DESC SET value='PDG000000001.1' WHERE name='Version'")
+        conn.execute("UPDATE METADATA SET strain='different'")
+    with sqlite3.connect(a / "a.db") as conn:
+        conn.execute("UPDATE METADATA SET strain='original'")
+    with pytest.raises(MergeConflict, match="strain"):
+        merge_databases([a, b], output)
+    with sqlite3.connect(b / "b.db") as conn:
+        conn.execute("UPDATE METADATA SET strain='original'")
+    mh = MinHash(n=100, ksize=21)
+    mh.add_many([7, 8])
+    write_signatures([SourmashSignature(mh, name="a")], b / "b.sig", nshards=1)
+    with pytest.raises(MergeConflict, match="different sketches"):
+        merge_databases([a, b], output)
+    custom = make_merge_input(tmp_path, "custom", ["c"])
+    with pytest.raises(ValueError, match="Incompatible database settings"):
+        merge_databases([a, custom], output)
+    assert not output.exists()

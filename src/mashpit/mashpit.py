@@ -9,6 +9,7 @@ from mashpit import build
 from mashpit import gui
 from mashpit import query
 from mashpit import reshard
+from mashpit import merge
 
 
 def positive_int(value):
@@ -59,6 +60,13 @@ def commandToArgs(commandline):
         "reshard",
         help="Rewrite a database's signature storage into parallel-loadable shards",
     )
+
+    subparser_merge = subparsers.add_parser("merge", help="Merge compatible database snapshots")
+    subparser_merge.add_argument("output", help="new output database directory")
+    subparser_merge.add_argument("databases", nargs="+", help="two or more input database directories or .db files")
+    subparser_merge.add_argument("--prefixes", nargs="+", help="one ID prefix per input (custom databases only)")
+    subparser_merge.add_argument("--conflict-report", help="write conflicts to a new JSON file on failure")
+    subparser_merge.set_defaults(func=merge.merge)
 
     # Build arguments
     subparser_build.add_argument(
