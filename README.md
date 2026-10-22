@@ -46,6 +46,8 @@ This approach reduces redundancy in compact clusters while preserving multiple g
 
 ## Installation
 
+Mashpit currently declares support for Python `>=3.8,<3.12`; use Python **3.11** for the Raspberry Pi instructions below. Python 3.12 and newer are not currently supported.
+
 ### Option 1: Conda or Mamba
 
 The latest stable release can be installed from Bioconda:
@@ -57,15 +59,16 @@ conda activate mashpit
 
 ### Option 2: pip
 
-Mashpit requires the NCBI Datasets command-line tool for downloading assemblies.
+Mashpit requires the NCBI Datasets command-line tool for downloading assemblies when building taxon or accession databases. It is not required for querying an existing database or building a custom database from local FASTA files.
 
-For Linux:
+For Intel/AMD 64-bit Linux (`x86_64`), install it with the following commands. Raspberry Pi users should follow the [ARM64 instructions below](#raspberry-pi-git-clone-and-a-python-virtual-environment).
 
 ```bash
-curl -o datasets \
+mkdir -p "$HOME/.local/bin"
+curl -fL -o "$HOME/.local/bin/datasets" \
   'https://ftp.ncbi.nlm.nih.gov/pub/datasets/command-line/v2/linux-amd64/datasets'
-chmod +x datasets
-export PATH="$PATH:/path/to/datasets"
+chmod +x "$HOME/.local/bin/datasets"
+export PATH="$HOME/.local/bin:$PATH"
 ```
 
 Install the stable release:
@@ -87,6 +90,74 @@ Verify the installation:
 ```bash
 mashpit --help
 ```
+
+### Raspberry Pi: Git clone and a Python virtual environment
+
+Use a **64-bit operating system** with **Python 3.11**. These instructions install the current Git source without Conda and assume a Debian-based system such as Raspberry Pi OS, with `python3` pointing to Python 3.11.
+
+Check the architecture, user-space bitness, and Python version first:
+
+```bash
+uname -m
+getconf LONG_BIT
+python3 --version
+```
+
+The expected results are `aarch64`, `64`, and `Python 3.11.x`. If the system uses 32-bit user space, use a 64-bit OS for this installation route. If `python3` is 3.12 or newer, install Python 3.11 with its matching `venv` and development packages separately, then use `python3.11 -m venv .venv` below. Creating a virtual environment does not change the interpreter version; do not replace the OS's system Python.
+
+Install the system packages needed to create the environment and compile dependencies:
+
+```bash
+sudo apt update
+sudo apt install -y git curl ca-certificates build-essential pkg-config \
+  python3-venv python3-dev libhdf5-dev
+```
+
+Clone the repository, create and activate the virtual environment, and install Mashpit:
+
+```bash
+git clone https://github.com/tongzhouxu/mashpit.git
+cd mashpit
+
+python3 -m venv .venv
+source .venv/bin/activate
+
+python -m pip install --upgrade pip
+python -m pip install .
+
+python -m pip check
+mashpit --help
+```
+
+Some dependencies compile from source, so installation can take time on a Pi. Keep the virtual environment activated while installing and running Mashpit; do not use `sudo pip`.
+
+If you will build taxon or accession databases that download NCBI assemblies, install the **Linux ARM64** Datasets executable into the activated virtual environment:
+
+```bash
+curl -fL -o "$VIRTUAL_ENV/bin/datasets" \
+  'https://ftp.ncbi.nlm.nih.gov/pub/datasets/command-line/v2/linux-arm64/datasets'
+chmod +x "$VIRTUAL_ENV/bin/datasets"
+datasets --version
+```
+
+The `linux-amd64` executable in the general Linux instructions is for Intel/AMD CPUs and will not run natively on a Pi. See the [NCBI Datasets installation documentation](https://www.ncbi.nlm.nih.gov/datasets/docs/v2/command-line-tools/download-and-install/) for platform downloads. Skip this step if you only query existing databases or build custom databases from local FASTA files.
+
+In a new terminal, change to your cloned repository and reactivate the environment:
+
+```bash
+cd /path/to/mashpit
+source .venv/bin/activate
+```
+
+To update an existing installation from Git, run these commands from the repository with the environment activated:
+
+```bash
+git pull --ff-only
+python -m pip install .
+python -m pip check
+```
+
+The repository does not currently run ARM-specific CI tests; these instructions are not a claim of validation on Raspberry Pi hardware.
 
 ## Database contents
 
