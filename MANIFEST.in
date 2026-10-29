@@ -1,0 +1,3 @@
+include CHANGELOG.md CONTRIBUTING.md CITATION.cff
+recursive-include test *.py *.tsv *.newick
+recursive-include docs *.md

@@ -1,6 +1,15 @@
 # Changelog
 
-## Unreleased
+## 1.0.0 — 2026-10-29
+
+- Select adaptive representatives from NCBI Pathogen Detection SNP trees with optional radius control, bounded assembly retries, and representative reselection.
+- Build custom databases from local FASTA files, annotate metadata with change history, and shard or reshard signatures for parallel local queries.
+- Merge compatible custom or taxon snapshots atomically, with strict sketch/settings checks, metadata conflict reports, provenance, and rebuilt cluster summaries.
+- Preserve IsoScout `REP_CLUSTER` annotations during taxon merges, reject conflicting annotations and unsupported SQLite tables, and archive input package manifests without reusing stale checksums.
+- Retain exact-release metadata and complete cluster membership, including isolates without assemblies. Read bundled versioned TSVs from existing IsoScout `databases-v2` packages.
+- Add standalone offline HTML reports and enriched Streamlit cluster reports with full membership statistics, dates, serotypes, and downloadable evidence.
+- Document Mashpit's screening role alongside IsoScout's downstream SNP workflow, Python 3.8–3.11 support, and Git/venv installation on ARM64. Raspberry Pi hardware performance remains unvalidated.
+- Include source-distribution test fixtures and a real-data IsoScout compatibility record; verify wheel installation and tag/version consistency before publishing.
 
 - Constrain PyArrow to versions below 26 for compatibility with Mashpit's NumPy 1.24 dependency, fixing Streamlit report failures on fresh Python 3.11 installations.
 - Add `mashpit query --no-tree` and the equivalent Streamlit setting. Search scores, ranks, ties, candidate counts, and cluster summaries are unchanged.

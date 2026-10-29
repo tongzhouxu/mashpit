@@ -724,16 +724,26 @@ def test_cluster_membership_summary_and_ranking(tmp_path):
             def handle_starttag(self, tag, attrs):
                 attrs = dict(attrs)
                 if tag == "a" and "download" in attrs:
-                    self.files[attrs["download"]] = base64.b64decode(attrs["href"].split(",", 1)[1])
+                    self.files[attrs["download"]] = base64.b64decode(
+                        attrs["href"].split(",", 1)[1]
+                    )
 
         evidence = hits.assign(strain='<script>alert("metadata")</script>')
         evidence.to_csv("sample_representative_matches.csv", index=True)
         expected_summary.to_csv("sample_cluster_candidates.csv", index=True)
         report = render_query_report(
-            "sample", "fixture", {"Version": "PDG000000004.5775"}, evidence,
-            expected_summary, {"status": "disabled", "reason": "Tree disabled"}, 200, 2,
+            "sample",
+            "fixture",
+            {"Version": "PDG000000004.5775"},
+            evidence,
+            expected_summary,
+            {"status": "disabled", "reason": "Tree disabled"},
+            200,
+            2,
         )
-        assert report.count("1 (33.3%)") == 3  # clinical, environmental, unknown out of 3
+        assert (
+            report.count("1 (33.3%)") == 3
+        )  # clinical, environmental, unknown out of 3
         assert "PDG000000004.5775" in report and "4,[5],12:i:-" in report
         assert "<script>" not in report and "&lt;script&gt;" in report
         downloads = Downloads()
@@ -747,15 +757,22 @@ def test_cluster_membership_summary_and_ranking(tmp_path):
         conn.commit()
         retain_release_tables(tmp_path, "PDG000000004.5775", metadata, membership)
         from mashpit.report import prepare_members
+
         actual_members = read_cluster_members(conn, ["A", "B"])
         for frame in (expected_members, actual_members):
             assert len(frame) == 4
         columns = ["target_acc", "PDS_acc", "Source group", "Computed serotype"]
         pd.testing.assert_frame_equal(
-            prepare_members(expected_members)[columns].sort_values("target_acc").reset_index(drop=True),
-            prepare_members(actual_members)[columns].sort_values("target_acc").reset_index(drop=True),
+            prepare_members(expected_members)[columns]
+            .sort_values("target_acc")
+            .reset_index(drop=True),
+            prepare_members(actual_members)[columns]
+            .sort_values("target_acc")
+            .reset_index(drop=True),
         )
-        pd.testing.assert_frame_equal(generate_cluster_table(conn, hits, 1000), expected_summary)
+        pd.testing.assert_frame_equal(
+            generate_cluster_table(conn, hits, 1000), expected_summary
+        )
         # Only the recorded release is eligible; unrelated snapshots are not substituted.
         conn.execute("UPDATE DESC SET value='PDG000000004.5776' WHERE name='Version'")
         assert read_cluster_members(conn, ["A"]).empty
@@ -1109,7 +1126,6 @@ def test_search_and_required_output_failures_remain_fatal(synthetic_query_db, tm
             assert (folder / "query_representative_matches.csv").is_file()
 
 
-
 def make_merge_input(root, name, ids, taxon=False):
     """Small snapshots shared by the three merge regressions below."""
     directory = root / name
@@ -1135,8 +1151,10 @@ def make_merge_input(root, name, ids, taxon=False):
                 ("bio_" + identity, identity, "cluster" if taxon else "missing"),
             )
             if taxon:
-                conn.execute("UPDATE METADATA SET PDT_acc=? WHERE asm_acc=?",
-                             ("target_" + identity, identity))
+                conn.execute(
+                    "UPDATE METADATA SET PDT_acc=? WHERE asm_acc=?",
+                    ("target_" + identity, identity),
+                )
                 conn.execute(
                     "INSERT INTO REPRESENTATIVE (asm_acc, PDT_acc, PDS_acc, tree_radius, fasta_path) VALUES (?, ?, ?, ?, ?)",
                     (
@@ -1219,11 +1237,20 @@ def test_merge_custom_workflow(tmp_path):
 
 
 def test_merge_taxon_membership(tmp_path):
-    from mashpit.merge import merge_databases
+    from mashpit.merge import MergeConflict, merge_databases
 
     a = make_merge_input(tmp_path, "a", ["a", "b"], taxon=True)
     b = make_merge_input(tmp_path, "b", ["b", "c"], taxon=True)
     for directory in [a, b]:
+        with sqlite3.connect(directory / (directory.name + ".db")) as conn:
+            conn.execute(
+                "CREATE TABLE REP_CLUSTER (PDS_acc TEXT PRIMARY KEY, "
+                "rep_designation TEXT, source_url TEXT)"
+            )
+            conn.execute(
+                "INSERT INTO REP_CLUSTER VALUES (?, ?, ?)",
+                ("cluster", "REP-test", "https://example.org/evidence"),
+            )
         (directory / "membership").mkdir()
         pd.DataFrame(
             [dict(target_acc="target_" + i, extra="retained") for i in ["a", "b", "c"]]
@@ -1240,9 +1267,31 @@ def test_merge_taxon_membership(tmp_path):
     with sqlite3.connect(tmp_path / "merged" / "merged.db") as conn:
         assert conn.execute("SELECT COUNT(*) FROM CLUSTER_MEMBERS").fetchone()[0] == 3
         assert conn.execute("SELECT COUNT(*) FROM REPRESENTATIVE").fetchone()[0] == 3
+        assert conn.execute("SELECT * FROM REP_CLUSTER").fetchall() == [
+            ("cluster", "REP-test", "https://example.org/evidence")
+        ]
     summary = pd.read_csv(tmp_path / "merged" / "cluster_summary.tsv", sep="\t")
     assert summary.iloc[0].cluster_size == 3
     assert summary.iloc[0].clinical_count == 3
+    with sqlite3.connect(b / "b.db") as conn:
+        conn.execute("UPDATE REP_CLUSTER SET rep_designation='conflicting'")
+    with pytest.raises(MergeConflict, match="REP_CLUSTER"):
+        merge_databases([a, b], tmp_path / "conflicting")
+    assert not (tmp_path / "conflicting").exists()
+    with sqlite3.connect(b / "b.db") as conn:
+        conn.execute("DROP TABLE REP_CLUSTER")
+    merge_databases([a, b], tmp_path / "one_labelled_source")
+    with sqlite3.connect(
+        tmp_path / "one_labelled_source/one_labelled_source.db"
+    ) as conn:
+        assert conn.execute("SELECT rep_designation FROM REP_CLUSTER").fetchone() == (
+            "REP-test",
+        )
+    with sqlite3.connect(b / "b.db") as conn:
+        conn.execute("CREATE TABLE FUTURE_ANNOTATIONS (value TEXT)")
+    with pytest.raises(ValueError, match="Unsupported tables"):
+        merge_databases([a, b], tmp_path / "unsupported")
+    assert not (tmp_path / "unsupported").exists()
 
 
 def test_merge_rejects_incompatible_inputs(tmp_path):

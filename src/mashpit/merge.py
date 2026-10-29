@@ -93,6 +93,22 @@ def merge_databases(databases, output, prefixes=None):
             kind = desc.get("Type")
             if kind not in {"Custom", "Taxonomy"}:
                 raise ValueError("Only Custom and Taxonomy databases can be merged")
+            supported_tables = {"DESC", "METADATA", "REPRESENTATIVE", "ANNOTATION_LOG"}
+            if kind == "Taxonomy":
+                supported_tables.update({"CLUSTER_MEMBERS", "REP_CLUSTER"})
+            input_tables = {
+                row[0]
+                for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                )
+                if not row[0].startswith("sqlite_")
+            }
+            unsupported = input_tables - supported_tables
+            if unsupported:
+                raise ValueError(
+                    "Unsupported tables would be lost during merge: %s"
+                    % ", ".join(sorted(unsupported))
+                )
             keys = ["Type", "Hash_number", "Kmer_size"]
             if kind == "Taxonomy":
                 if any(prefixes):
@@ -196,6 +212,17 @@ def merge_databases(databases, output, prefixes=None):
                     history["merge_source"] = history["merge_source"].fillna(str(path))
                 tables.setdefault("ANNOTATION_LOG", []).append(history)
             if kind == "Taxonomy":
+                if "REP_CLUSTER" in input_tables:
+                    labels = read_table(conn, "REP_CLUSTER")
+                    if (
+                        "PDS_acc" not in labels
+                        or labels.PDS_acc.map(clean).eq("Unknown").any()
+                        or labels.PDS_acc.duplicated().any()
+                    ):
+                        raise ValueError(
+                            "REP_CLUSTER requires unique nonempty PDS_acc values"
+                        )
+                    tables.setdefault("REP_CLUSTER", []).append(labels)
                 reps = read_table(conn, "REPRESENTATIVE")
                 if reps.empty or set(reps.asm_acc) != original_ids:
                     raise ValueError("Representative IDs do not match metadata")
@@ -260,6 +287,7 @@ def merge_databases(databases, output, prefixes=None):
                 "METADATA": "asm_acc",
                 "REPRESENTATIVE": "asm_acc",
                 "CLUSTER_MEMBERS": "target_acc",
+                "REP_CLUSTER": "PDS_acc",
             }[table]
             merged[table] = combine(frames, key, table)
     if merged["METADATA"].biosample_acc.duplicated().any():
@@ -299,6 +327,10 @@ def merge_databases(databases, output, prefixes=None):
                 conn.execute(
                     "CREATE INDEX cluster_members_pds ON CLUSTER_MEMBERS(PDS_acc)"
                 )
+            if "REP_CLUSTER" in merged:
+                conn.execute(
+                    "CREATE UNIQUE INDEX rep_cluster_pds ON REP_CLUSTER(PDS_acc)"
+                )
             desc = dict(settings)
             desc[
                 (
@@ -331,6 +363,8 @@ def merge_databases(databases, output, prefixes=None):
                     "unavailable_assemblies.tsv",
                     "unavailable_sequences.tsv",
                     "merge_provenance.json",
+                    "database.json",
+                    "rep_cluster_annotations.json",
                 }:
                     shutil.copy2(artifact, source_dir / artifact.name)
         for name, frame in archive_frames.items():

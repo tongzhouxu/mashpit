@@ -11,7 +11,27 @@
 
 Mashpit is designed for offline or resource-limited analysis, including deployment on small computers such as a Raspberry Pi. It combines compact genomic sketches, epidemiological metadata, and tree-guided representative selection to support fast preliminary genome screening without requiring a centralized computing service.
 
-> **Mashpit 1.0 is under development.** The database-building workflow described below reflects the new tree-based design and may differ from the latest packaged release.
+**Mashpit 1.0** provides adaptive tree-based representative selection, local database management, and reproducible screening outputs. See the [changelog](CHANGELOG.md) for changes since 0.9.10. Use Python 3.8–3.11; Python 3.11 is recommended.
+
+### Mashpit and IsoScout
+
+Mashpit builds and manages sketch databases and screens assembled genomes locally.
+[IsoScout](https://github.com/tongzhouxu/IsoScout) uses Mashpit screening as the
+first stage of a broader workflow with input QC, candidate selection, SNP
+comparison, and optional cluster-member expansion. Mashpit's similarity scores
+and near-top flags prioritize candidates; they do not establish outbreak
+membership or replace SNP analysis.
+
+Existing IsoScout `databases-v2` packages can supply exact-release cluster
+membership to Mashpit reports. Taxon merges preserve the optional `REP_CLUSTER`
+annotation table and reject conflicting labels. IsoScout containers pin their
+own Mashpit revision: installing Mashpit 1.0 on the host does not update a
+container. Follow IsoScout's runtime and database-manifest requirements when
+integrating a new or merged database.
+
+See the [1.0 validation record](docs/release-1.0-validation.md) for the tested
+IsoScout revision, real-genome smoke checks, and their limits. These checks do
+not establish biological accuracy or validate the full IsoScout SNP workflow.
 
 ## Key features
 
@@ -50,7 +70,8 @@ Mashpit currently declares support for Python `>=3.8,<3.12`; use Python **3.11**
 
 ### Option 1: Conda or Mamba
 
-The latest stable release can be installed from Bioconda:
+Bioconda packaging can lag behind GitHub and PyPI. Use the pinned pip command
+below for 1.0.0; the following installs the version currently available on Bioconda:
 
 ```bash
 conda create -n mashpit -c conda-forge -c bioconda mashpit
@@ -74,7 +95,7 @@ export PATH="$HOME/.local/bin:$PATH"
 Install the stable release:
 
 ```bash
-python -m pip install mashpit
+python -m pip install 'mashpit==1.0.0'
 ```
 
 Install the development version from source:
@@ -374,6 +395,12 @@ Assembly IDs and BioSample IDs must each remain unique. Prefixes are available
 only for custom inputs. Without prefixes, resolve conflicting metadata in a
 separate copy of an input before retrying.
 
+Taxon merges also union optional IsoScout `REP_CLUSTER` annotations by the exact,
+versioned `PDS_acc`, retaining all annotation columns. Conflicting nonempty labels
+or evidence fields reject the merge; a source without annotations does not erase
+another source's labels. Unknown SQLite tables are rejected to prevent silent
+loss of extensions.
+
 To save the first conflicting record and field as JSON:
 
 ```bash
@@ -386,6 +413,10 @@ No output database is published on failure.
 `merge_provenance.json` records source paths, original settings, ID mappings,
 and deduplication counts. Source build tables, unavailable-record tables, and prior merge manifests
 are retained under `merge_sources/`, and annotation history is preserved with source paths.
+Original `database.json` and `rep_cluster_annotations.json` sidecars, when present,
+are also archived there. They describe the inputs, not the merged database.
+Generate a new IsoScout package manifest and checksums before using the merged
+output as an IsoScout package; source manifests must not be reused for it.
 Available versioned release TSVs are combined without dropping their columns;
 conflicting records are rejected. Taxon output includes rebuilt
 `representatives.tsv` and `cluster_summary.tsv`. Source-specific download

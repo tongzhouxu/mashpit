@@ -1,4 +1,6 @@
 cff-version: "1.2.0"
+version: "1.0.0"
+date-released: 2026-10-29
 authors:
 - family-names: Xu
   given-names: Tongzhou
